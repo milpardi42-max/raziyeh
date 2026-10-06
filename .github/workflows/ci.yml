@@ -1,9 +1,9 @@
 name: CI
 on:
   push:
-    branches: [main, "arena/**"]
+    branches: [main, master, "arena/**"]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 jobs:
   check:
     runs-on: ubuntu-latest
