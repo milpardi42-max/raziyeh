@@ -2,6 +2,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { findUserByEmail, verifyPassword, type PublicUser } from "./data/users";
 import { getContent } from "./data/store";
+import { ADMIN_LOGIN_DISABLED, TEMPORARY_ADMIN_SESSION } from "./admin-access";
 import { SESSION_COOKIE, type SessionUser, readSessionToken } from "./session";
 
 export { SESSION_COOKIE, createSessionToken, readSessionToken } from "./session";
@@ -111,13 +112,41 @@ export async function getSession(): Promise<SessionUser | null> {
   }
 }
 
-export function sessionCookieOptions() {
+/**
+ * Admin-only gate. In temporary open mode this returns a synthetic admin solely
+ * to callers that explicitly protect the admin application; regular site
+ * sessions and customer-facing APIs continue to use getSession().
+ */
+export async function getAdminSession(): Promise<SessionUser | null> {
+  const session = await getSession();
+  if (session?.role === "admin") return session;
+  return ADMIN_LOGIN_DISABLED ? TEMPORARY_ADMIN_SESSION : null;
+}
+
+export function sessionCookieOptions(request?: Request) {
+  // Arena/WebContainer previews may be embedded in a cross-site iframe. A Lax
+  // cookie is not sent on the follow-up admin navigation there, even though the
+  // login API has accepted the credentials. Use a partitioned Secure cookie only
+  // on those preview hosts; normal local development and production retain their
+  // existing same-site policy.
+  const forwardedHost = request?.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const hostHeader = forwardedHost || request?.headers.get("host");
+  const hostname = (hostHeader
+    ? hostHeader.replace(/:\d+$/, "")
+    : request
+      ? new URL(request.url).hostname
+      : "").toLowerCase();
+  const isEmbeddedPreview = [".e2b.app", ".webcontainer-api.io", ".stackblitz.io"].some((suffix) =>
+    hostname.endsWith(suffix),
+  );
+
   return {
     httpOnly: true,
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    sameSite: isEmbeddedPreview ? ("none" as const) : ("lax" as const),
+    secure: process.env.NODE_ENV === "production" || isEmbeddedPreview,
     path: "/",
     maxAge: SESSION_TTL_S,
+    ...(isEmbeddedPreview ? { partitioned: true } : {}),
   };
 }
 

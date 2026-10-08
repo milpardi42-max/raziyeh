@@ -12,6 +12,7 @@ interface EnrollResult {
   status: string;
   startsAt: string;
   paymentDue: boolean;
+  accessGranted: boolean;
 }
 
 /**
@@ -85,26 +86,38 @@ export function EnrollForm({
         <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-success" />
         <p className="font-display text-h4 text-foreground">{fa ? "ثبت‌نام شما ثبت شد" : "You're registered"}</p>
         <p className="mt-1 text-body-sm text-foreground-secondary">
-          {isEvent
+          {result.paymentDue
             ? fa
-              ? "صندلی شما رزرو شد؛ لینک ورود به رویداد را برایتان می‌فرستیم."
-              : "Your seat is reserved — we'll e-mail the event link."
-            : fa
-              ? "دسترسی شما فعال شد؛ می‌توانید از همین صفحه دوره را شروع کنید."
-              : "Your access is active — start the course from this page."}
+              ? "ثبت‌نام شما دریافت شد؛ دسترسی تا تأیید پرداخت بسته می‌ماند."
+              : "Your registration is recorded; access stays locked until payment is verified."
+            : isEvent
+              ? fa
+                ? "صندلی شما رزرو شد و دسترسی رویداد فعال است."
+                : "Your seat is reserved and event access is active."
+              : isPaid
+                ? fa
+                  ? "پرداخت تأیید شده و دسترسی دوره فعال است."
+                  : "Payment is verified and course access is active."
+                : fa
+                  ? "دسترسی رایگان فعال است؛ می‌توانید دوره را از همین صفحه شروع کنید."
+                  : "Free access is active — start the course from this page."}
         </p>
         {result.paymentDue && (
-          <p className="mt-2 text-caption text-warning">
-            {fa
-              ? "این دوره پرداخت دارد؛ همکاران آکادمی برای هماهنگی پرداخت با شما تماس می‌گیرند."
-              : "This course is paid — the academy will contact you to arrange payment."}
-          </p>
+          <div className="mt-2 space-y-2 text-caption text-warning">
+            <p>{fa
+              ? "پس از بررسی پرداخت، مدیر آکادمی دسترسی را فعال می‌کند. برای ورود به درس‌ها با همین ایمیل حساب بسازید یا وارد شوید."
+              : "After payment is verified, an academy admin will enable access. Create an account or sign in with this same email to watch lessons."}</p>
+            <div className="flex justify-center gap-3">
+              <Link href={href(locale, "/signup")} className="underline underline-offset-2">{fa ? "ساخت حساب" : "Create account"}</Link>
+              <Link href={href(locale, "/login")} className="underline underline-offset-2">{fa ? "ورود" : "Sign in"}</Link>
+            </div>
+          </div>
         )}
         <p className="mt-3 text-caption text-muted" dir="ltr">
           {result.id}
         </p>
         <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-          {isEvent && item.type !== "course" && (
+          {isEvent && item.type !== "course" && result.accessGranted && (
             <Link
               href={href(locale, `/academy/${item.slug}/live`)}
               onClick={onDone}

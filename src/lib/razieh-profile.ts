@@ -59,8 +59,8 @@ export const RAZIEH_PROFILE = {
       "Her method is technique-led: hand sketching, gouache and watercolour studies, digitising and building the repeating geometry, preparing high-resolution deliverables and colour-correcting for each production route — from digital printing to woven texture. To her the outcome is never just a pretty image; it is a manufacturable product that must sit right on the wall and repeat reliably in the workshop.",
     ),
     L(
-      "تدریس و پژوهش بخش جدانشدنی کار اوست: انتقال تجربه‌ی کارگاه طراحی پترن به دانشجویان هنرهای تزئینی و همراهی پروژه‌های عملی تا مرحله‌ی تولید. همین تجربه در آکادمی رزی به‌شکل درس، کارگاه و جلسه‌ی زنده در اختیار طراحان جوان‌تر قرار می‌گیرد.",
-      "Teaching and research are inseparable from her practice: carrying the pattern-design workshop into the classroom for decorative-arts students, and following practical projects through to production. That same experience is what the Rosie Academy offers younger designers today as courses, workshops and live sessions.",
+      "تدریس و پژوهش بخش جدانشدنی کار اوست: انتقال تجربه‌ی کارگاه طراحی پترن به دانشجویان هنرهای تزئینی و همراهی پروژه‌های عملی تا مرحله‌ی تولید. همین تجربه در آکادمی آتلیه رزی به‌شکل درس، کارگاه و جلسه‌ی زنده در اختیار طراحان جوان‌تر قرار می‌گیرد.",
+      "Teaching and research are inseparable from her practice: carrying the pattern-design workshop into the classroom for decorative-arts students, and following practical projects through to production. That same experience is what the Rosie Atelier Academy offers younger designers today as courses, workshops and live sessions.",
     ),
     L(
       "آتلیه رزی حاصل همین نگاه است؛ جایی که آثار او در کنار آثار طراحان مستقل دیگر عرضه می‌شود، سفارش‌های سازمانی و تولید سفارشی پذیرفته می‌شود و مسیرِ دیده‌شدن و درآمد منصفانه برای طراحان باز می‌ماند. این صفحه، پنجره‌ی ورود به همان مسیر است.",
@@ -138,12 +138,12 @@ export const RAZIEH_PROFILE = {
   collaboration: {
     title: L("همکاری، سفارش سازمانی یا کارگاه", "Collaboration, commissions or workshops"),
     text: L(
-      "برای پروژه‌های سفارشی، تولید اختصاصی، همکاری با برندها یا برگزاری کارگاه و جلسه‌ی زنده در آکادمی رزی، راه‌های زیر باز است.",
-      "For custom projects, exclusive production, brand collaborations or hosting a workshop and live session at Rosie Academy, these are the ways in.",
+      "برای پروژه‌های سفارشی، تولید اختصاصی، همکاری با برندها یا برگزاری کارگاه و جلسه‌ی زنده در آکادمی آتلیه رزی، راه‌های زیر باز است.",
+      "For custom projects, exclusive production, brand collaborations or hosting a workshop and live session at Rosie Atelier Academy, these are the ways in.",
     ),
     links: [
       { label: L("تماس با ما", "Contact us"), path: "/contact" },
-      { label: L("آکادمی رزی", "Rosie Academy"), path: "/academy" },
+      { label: L("آکادمی آتلیه رزی", "Rosie Atelier Academy"), path: "/academy" },
       { label: L("درباره‌ی آتلیه", "About the atelier"), path: "/about" },
       { label: L("همکاری به‌عنوان طراح", "Join as a designer"), path: "/creators/join" },
     ] as { label: Localized; path: string }[],

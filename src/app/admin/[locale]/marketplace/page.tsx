@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AdminConsole } from "@/components/marketplace/AdminConsole";
-import { getSession } from "@/lib/auth";
+import { getAdminSession } from "@/lib/auth";
 import type { Locale } from "@/lib/i18n/types";
 import { href } from "@/lib/utils";
 
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
  */
 export default async function AdminMarketplacePage({ params }: { params: Promise<{ locale: Locale }> }) {
   const { locale } = await params;
-  const session = await getSession();
+  const session = await getAdminSession();
 
   if (!session || session.role !== "admin") {
     redirect(href(locale, `/admin/login?next=/admin/marketplace`));

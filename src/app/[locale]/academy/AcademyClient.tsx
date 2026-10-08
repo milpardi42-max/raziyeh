@@ -25,8 +25,10 @@ import { Button } from "@/components/ui/Button";
 import { Reveal } from "@/components/ui/Reveal";
 import { useLocale } from "@/components/providers/AppProviders";
 import { EnrollForm } from "@/components/academy/EnrollForm";
-import type { EducationCardData } from "@/components/cards/EducationCard";
 import type { Category } from "@/lib/types";
+import type { EducationCardData } from "@/components/cards/EducationCard";
+import { LiveEventBanner } from "@/components/academy/LiveEventBanner";
+import type { EnrichedEducation } from "@/lib/data/enrich";
 
 /* ─── Types ─────────────────────────────────────────────────── */
 type Tab = "all" | "course" | "workshop" | "webinar";
@@ -61,8 +63,11 @@ export interface AcademyInstructorStat {
   videos: number;
 }
 
+export type AcademyClientItem = Omit<EducationCardData, "videoFiles"> & { previewVideoUrl?: string };
+
 interface Props {
-  items: EducationCardData[];
+  items: AcademyClientItem[];
+  liveEvent?: EnrichedEducation | null;
   categories: Category[];
   /** Category id coming from `?category=<slug>` (the strip on the academy page). */
   initialCategory?: string;
@@ -72,22 +77,22 @@ interface Props {
 }
 
 /* ─── Real price helpers (no price set = free to watch) ─────── */
-function priceOf(item: EducationCardData, locale: "fa" | "en"): { value: number; isFree: boolean } {
+function priceOf(item: AcademyClientItem, locale: "fa" | "en"): { value: number; isFree: boolean } {
   const value = item.price?.[locale] ?? 0;
   return { value, isFree: value <= 0 };
 }
 
-function formatItemPrice(item: EducationCardData, locale: "fa" | "en"): string {
+function formatItemPrice(item: AcademyClientItem, locale: "fa" | "en"): string {
   const { value, isFree } = priceOf(item, locale);
   if (isFree) return locale === "fa" ? "رایگان" : "Free";
   return locale === "fa" ? `${faNum(value.toLocaleString("en-US"))} تومان` : `$${value}`;
 }
 
-function lessonsOf(item: EducationCardData): number {
+function lessonsOf(item: AcademyClientItem): number {
   return item.lessonList?.length || item.lessons || 0;
 }
 
-function minutesOf(item: EducationCardData): number {
+function minutesOf(item: AcademyClientItem): number {
   const listed = item.lessonList?.reduce((sum, lesson) => sum + (lesson.durationMin ?? 0), 0) ?? 0;
   return listed || item.durationMin;
 }
@@ -98,7 +103,7 @@ function EnrollModal({
   stat,
   onClose,
 }: {
-  item: EducationCardData;
+  item: AcademyClientItem;
   stat?: AcademyItemStat;
   onClose: () => void;
 }) {
@@ -108,7 +113,7 @@ function EnrollModal({
   const { value: priceValue, isFree } = priceOf(item, locale);
   const priceLabel = isFree ? null : isFA ? `${faNum(priceValue.toLocaleString("en-US"))} تومان` : `$${priceValue}`;
 
-  const preview = item.videoFiles?.find((video) => video.free) ?? item.videoFiles?.[0];
+  const previewVideoUrl = item.previewVideoUrl;
 
   const typeLabel =
     item.type === "course"
@@ -134,8 +139,8 @@ function EnrollModal({
       >
         {/* Header: the course's own preview video when the panel has one */}
         <div className="relative h-40 overflow-hidden bg-[#0f141c]">
-          {preview && !previewVideoFailed ? (
-            <video src={preview.url} poster={item.image} muted loop autoPlay playsInline preload="metadata" onError={() => setPreviewVideoFailed(true)} className="absolute inset-0 h-full w-full object-cover opacity-80" />
+          {previewVideoUrl && !previewVideoFailed ? (
+            <video src={previewVideoUrl} poster={item.image} muted loop autoPlay playsInline preload="metadata" onError={() => setPreviewVideoFailed(true)} className="absolute inset-0 h-full w-full object-cover opacity-80" />
           ) : (
             <Image src={item.image} alt="" fill sizes="600px" className="object-cover opacity-60" />
           )}
@@ -238,8 +243,8 @@ function CourseCard({
   onEnroll,
   stat,
 }: {
-  item: EducationCardData;
-  onEnroll: (item: EducationCardData) => void;
+  item: AcademyClientItem;
+  onEnroll: (item: AcademyClientItem) => void;
   stat?: AcademyItemStat;
 }) {
   const { locale, dict } = useLocale();
@@ -383,8 +388,8 @@ function EventRow({
   onEnroll,
   stat,
 }: {
-  item: EducationCardData;
-  onEnroll: (item: EducationCardData) => void;
+  item: AcademyClientItem;
+  onEnroll: (item: AcademyClientItem) => void;
   stat?: AcademyItemStat;
 }) {
   const { locale, dict } = useLocale();
@@ -394,6 +399,9 @@ function EventRow({
   const url = href(locale, `/academy/${item.slug}`);
   const seatsLeft = stat?.seatsLeft ?? null;
   const capacity = stat?.capacity ?? 0;
+  const eventStatus = item.liveEvent?.status ?? "ended";
+  const isLive = eventStatus === "live";
+  const isEnded = eventStatus === "ended" || eventStatus === "cancelled";
 
   return (
     <Reveal>
@@ -403,9 +411,12 @@ function EventRow({
         </Link>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-0.5 text-caption font-medium text-success">
-              <Wifi className="h-3 w-3" />
-              {isFA ? "رویداد زنده" : "Live Event"}
+            <span className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-caption font-medium",
+              isLive ? "bg-red-500/10 text-red-600" : isEnded ? "bg-background-secondary text-muted" : "bg-success/10 text-success",
+            )}>
+              {isLive ? <Wifi className="h-3 w-3" /> : isEnded ? <CheckCircle2 className="h-3 w-3" /> : <Calendar className="h-3 w-3" />}
+              {isFA ? isLive ? "در حال برگزاری" : isEnded ? eventStatus === "cancelled" ? "لغوشده" : "پایان‌یافته" : "زمان‌بندی‌شده" : isLive ? "Live now" : isEnded ? eventStatus === "cancelled" ? "Cancelled" : "Ended" : "Scheduled"}
             </span>
             {item.popular && (
               <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2.5 py-0.5 text-caption font-medium text-warning">
@@ -457,16 +468,15 @@ function EventRow({
           )}
           <button
             onClick={() => onEnroll(item)}
-            disabled={seatsLeft !== null && seatsLeft <= 0}
+            disabled={isEnded}
             className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:border-accent hover:bg-accent hover:text-accent-foreground active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {seatsLeft !== null && seatsLeft <= 0
-              ? isFA
-                ? "تکمیل ظرفیت"
-                : "Full"
-              : isFA
-                ? "ثبت‌نام"
-                : "Register"}
+            {isEnded
+              ? isFA ? eventStatus === "cancelled" ? "لغوشده" : "پایان‌یافته" : eventStatus === "cancelled" ? "Cancelled" : "Ended"
+              : seatsLeft !== null && seatsLeft <= 0
+                ? isFA ? "تکمیل ظرفیت" : "Full"
+                : isFA ? isLive ? "ورود به رویداد" : "ثبت‌نام"
+                  : isLive ? "Join event" : "Register"}
           </button>
         </div>
       </div>
@@ -475,7 +485,7 @@ function EventRow({
 }
 
 /* ─── Instructor Card ────────────────────────────────────────── */
-function InstructorCard({ item, stat }: { item: EducationCardData; stat?: AcademyInstructorStat }) {
+function InstructorCard({ item, stat }: { item: AcademyClientItem; stat?: AcademyInstructorStat }) {
   const { locale, dict } = useLocale();
   const isFA = locale === "fa";
   if (!item.author) return null;
@@ -502,20 +512,20 @@ function InstructorCard({ item, stat }: { item: EducationCardData; stat?: Academ
 }
 
 /* ─── Main Client Component ──────────────────────────────────── */
-export function AcademyClient({ items, categories, initialCategory, stats, itemStats, instructorStats }: Props) {
+export function AcademyClient({ items, liveEvent, categories, initialCategory, stats, itemStats, instructorStats }: Props) {
   const { locale, dict } = useLocale();
   const isFA = locale === "fa";
   const [activeTab, setActiveTab] = useState<Tab>("all");
   const [activeCategory, setActiveCategory] = useState<string>(initialCategory && initialCategory !== "all" ? initialCategory : "all");
   const [sortKey, setSortKey] = useState<SortKey>("popular");
-  const [enrollItem, setEnrollItem] = useState<EducationCardData | null>(null);
+  const [enrollItem, setEnrollItem] = useState<AcademyClientItem | null>(null);
   const [showFilters, setShowFilters] = useState(false);
 
   const tabs: { key: Tab; label: string; icon: React.ElementType }[] = [
     { key: "all", label: isFA ? "همه" : "All", icon: BookOpen },
-    { key: "course", label: isFA ? "دوره‌ها" : "Courses", icon: Video },
-    { key: "workshop", label: isFA ? "ورکشاپ" : "Workshops", icon: Calendar },
     { key: "webinar", label: isFA ? "وبینار" : "Webinars", icon: Globe },
+    { key: "workshop", label: isFA ? "ورکشاپ" : "Workshops", icon: Calendar },
+    { key: "course", label: isFA ? "فیلم‌های آموزشی" : "Recorded courses", icon: Video },
   ];
 
   const filtered = items.filter((item) => {
@@ -524,7 +534,7 @@ export function AcademyClient({ items, categories, initialCategory, stats, itemS
     return tabMatch && catMatch;
   });
 
-  const enrollments = (item: EducationCardData) => itemStats[item.slug]?.enrollments ?? 0;
+  const enrollments = (item: AcademyClientItem) => itemStats[item.slug]?.enrollments ?? 0;
 
   const sorted = [...filtered].sort((a, b) => {
     if (sortKey === "popular") {
@@ -548,7 +558,7 @@ export function AcademyClient({ items, categories, initialCategory, stats, itemS
 
   const n = (v: number) => (isFA ? faNum(v) : String(v));
 
-  const uniqueInstructorItems = items.reduce<EducationCardData[]>((acc, item) => {
+  const uniqueInstructorItems = items.reduce<AcademyClientItem[]>((acc, item) => {
     if (item.author && !acc.some((x) => x.authorId === item.authorId)) acc.push(item);
     return acc;
   }, []);
@@ -643,25 +653,6 @@ export function AcademyClient({ items, categories, initialCategory, stats, itemS
         </div>
       </div>
 
-      {/* ── Stats bar — computed from published content and stored registrations ── */}
-      <div className="container-x py-8">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatCard icon={BookOpen} value={n(stats.courses)} label={isFA ? "دوره آموزشی" : "Courses"} />
-          <StatCard icon={Video} value={n(stats.lessons)} label={isFA ? "درس" : "Lessons"} />
-          <StatCard icon={Users} value={n(stats.instructors)} label={isFA ? "مدرس" : "Instructors"} />
-          <StatCard
-            icon={Calendar}
-            value={n(stats.enrollments)}
-            label={isFA ? "ثبت‌نام واقعی" : "Real enrollments"}
-          />
-        </div>
-        <p className="mt-3 text-caption text-muted">
-          {isFA
-            ? `مجموع ${faNum(Math.round(stats.minutes / 60))} ساعت آموزش در ${faNum(stats.courses)} دوره. آمار از محتوای منتشرشده و ثبت‌نام‌های واقعی محاسبه می‌شود.`
-            : `${Math.round(stats.minutes / 60)} hours of teaching across ${stats.courses} courses. Numbers come from published content and real registrations.`}
-        </p>
-      </div>
-
       {/* ── Webinars ───────────────────────────────────────────── */}
       {(activeTab === "all" || activeTab === "webinar") && webinarItems.length > 0 && (
         <section className="bg-background-secondary">
@@ -674,6 +665,7 @@ export function AcademyClient({ items, categories, initialCategory, stats, itemS
                 {n(webinarItems.length)} {isFA ? "رویداد" : "events"}
               </span>
             </div>
+            {liveEvent?.type === "webinar" && <div className="mb-6"><LiveEventBanner event={liveEvent} registeredCount={itemStats[liveEvent.slug]?.enrollments ?? 0} /></div>}
             <div className="flex flex-col gap-4">
               {webinarItems.map((item) => (
                 <EventRow key={item.id} item={item} onEnroll={setEnrollItem} stat={itemStats[item.slug]} />
@@ -686,15 +678,16 @@ export function AcademyClient({ items, categories, initialCategory, stats, itemS
       {/* ── Workshops ──────────────────────────────────────────── */}
       {(activeTab === "all" || activeTab === "workshop") && workshopItems.length > 0 && (
         <section className="container-x py-14">
-          <div className="mb-6 flex items-center justify-between">
-            <h2 className="font-display text-h3 text-foreground">
-              {isFA ? "ورکشاپ‌ها" : "Workshops"}
-            </h2>
-            <span className="text-caption text-muted tabular">
-              {n(workshopItems.length)} {isFA ? "رویداد" : "events"}
-            </span>
-          </div>
-          <div className="flex flex-col gap-4">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="font-display text-h3 text-foreground">
+                {isFA ? "ورکشاپ‌ها" : "Workshops"}
+              </h2>
+              <span className="text-caption text-muted tabular">
+                {n(workshopItems.length)} {isFA ? "رویداد" : "events"}
+              </span>
+            </div>
+            {liveEvent?.type === "workshop" && <div className="mb-6"><LiveEventBanner event={liveEvent} registeredCount={itemStats[liveEvent.slug]?.enrollments ?? 0} /></div>}
+            <div className="flex flex-col gap-4">
             {workshopItems.map((item) => (
               <EventRow key={item.id} item={item} onEnroll={setEnrollItem} stat={itemStats[item.slug]} />
             ))}
@@ -741,6 +734,21 @@ export function AcademyClient({ items, categories, initialCategory, stats, itemS
         </div>
       )}
 
+      {/* Real counts follow the three catalogue groups so the learning path stays visually first. */}
+      <div className="container-x py-8">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatCard icon={BookOpen} value={n(stats.courses)} label={isFA ? "دوره آموزشی" : "Courses"} />
+          <StatCard icon={Video} value={n(stats.lessons)} label={isFA ? "درس" : "Lessons"} />
+          <StatCard icon={Users} value={n(stats.instructors)} label={isFA ? "مدرس" : "Instructors"} />
+          <StatCard icon={Calendar} value={n(stats.enrollments)} label={isFA ? "ثبت‌نام واقعی" : "Real enrollments"} />
+        </div>
+        <p className="mt-3 text-caption text-muted">
+          {isFA
+            ? `مجموع ${faNum(Math.round(stats.minutes / 60))} ساعت آموزش در ${faNum(stats.courses)} دوره. آمار از محتوای منتشرشده و ثبت‌نام‌های واقعی محاسبه می‌شود.`
+            : `${Math.round(stats.minutes / 60)} hours of teaching across ${stats.courses} courses. Numbers come from published content and real registrations.`}
+        </p>
+      </div>
+
       {/* ── Instructors ───────────────────────────────────────── */}
       {activeTab === "all" && uniqueInstructorItems.length > 0 && (
         <section className="container-x py-14">
@@ -762,7 +770,7 @@ export function AcademyClient({ items, categories, initialCategory, stats, itemS
           <div className="container-x py-16 text-center text-white">
             <p className="mb-3 text-label text-white/60">{isFA ? "همین حالا شروع کن" : "Start today"}</p>
             <h2 className="mb-4 font-display text-h1 text-white text-balance">
-              {isFA ? "به آکادمی رزی بپیوند." : "Join Rosie Academy."}
+              {isFA ? "به آکادمی آتلیه رزی بپیوند." : "Join Rosie Atelier Academy."}
             </h2>
             <p className="mx-auto mb-8 max-w-lg text-body-lg text-white/70">
               {isFA
@@ -790,7 +798,7 @@ export function AcademyClient({ items, categories, initialCategory, stats, itemS
 }
 
 /** Featured course link for the closing CTA (falls back to the catalogue). */
-function featuredHref(items: EducationCardData[]): string {
+function featuredHref(items: AcademyClientItem[]): string {
   const featured = items.find((item) => item.featured && item.type === "course") ?? items[0];
   return featured ? `/academy/${featured.slug}` : "/academy";
 }

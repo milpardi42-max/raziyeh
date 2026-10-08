@@ -23,7 +23,7 @@ export function generateStaticParams() {
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
   const d = dictionaries[(locale as Locale) ?? "fa"];
-  const site = (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "");
+  const site = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://rosieatelier.com").replace(/\/$/, "");
   return {
     title: { default: d?.brand ?? "Rosie Atelier", template: `%s · Rosie Atelier` },
     description: d?.tagline,

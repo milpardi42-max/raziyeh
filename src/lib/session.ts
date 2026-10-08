@@ -67,6 +67,13 @@ export async function readSessionToken(token: string | undefined): Promise<Sessi
   try {
     const data = JSON.parse(fromB64url(payload)) as SessionUser & { exp: number };
     if (!data.exp || data.exp < Math.floor(Date.now() / 1000)) return null;
+    // Preview-admin sessions are temporary and must stop working as soon as the
+    // explicit local preview bypass is switched off, including cookies issued
+    // while that bypass was enabled in an earlier server process.
+    if (
+      data.id === "preview-admin" &&
+      (process.env.NODE_ENV === "production" || process.env.ROSIE_ADMIN_BYPASS !== "1")
+    ) return null;
     return {
       id: data.id,
       name: data.name,

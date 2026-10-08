@@ -20,7 +20,6 @@ import {
   MonitorPlay,
   PhoneOff,
   Radio,
-  Send,
   Users,
   Video,
   VideoOff,
@@ -50,14 +49,49 @@ interface QAQuestion {
 
 type BroadcastStatus = "idle" | "starting" | "live" | "ended" | "error";
 
-const ICE_SERVERS: RTCIceServer[] = [
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
 
+function broadcastErrorMessage(error: unknown): string {
+  if (typeof window !== "undefined" && !window.isSecureContext) {
+    return "برای روشن کردن دوربین، صفحه باید با HTTPS باز شود.";
+  }
+  const name = error && typeof error === "object" && "name" in error
+    ? String((error as { name?: unknown }).name ?? "")
+    : "";
+  const message = error instanceof Error ? error.message : "";
+
+  if (message === "event_closed") return "این رویداد پایان‌یافته یا لغوشده است؛ یک رویداد آینده را انتخاب کنید.";
+  if (message === "event_not_online") return "این رویداد به‌صورت آنلاین تنظیم نشده است؛ تنظیمات آکادمی را بررسی کنید.";
+  if (message === "external_stream_configured") return "این رویداد از سرویس خارجی پخش می‌شود؛ لینک همان سرویس را باز کنید.";
+  if (message === "event_status_unavailable") return "ذخیره وضعیت رویداد انجام نشد؛ اتصال سرور را بررسی کنید و دوباره تلاش کنید.";
+  if (message === "unauthorized") return "نشست مدیر معتبر نیست؛ دوباره وارد پنل مدیریت شوید و تلاش کنید.";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "اجازهٔ دوربین یا میکروفون داده نشد. از تنظیمات مجوز سایت، دسترسی Camera و Microphone را فعال و دوباره تلاش کنید.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "دوربین یا میکروفونی پیدا نشد. دستگاه را وصل کنید و دوباره تلاش کنید.";
+  }
+  if (name === "NotReadableError" || name === "AbortError") {
+    return "دوربین یا میکروفون در برنامهٔ دیگری مشغول است. آن برنامه را ببندید و دوباره تلاش کنید.";
+  }
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    return "تنظیمات دوربین این دستگاه پشتیبانی نمی‌شود؛ دوربین پیش‌فرض دستگاه را انتخاب کنید.";
+  }
+  if (message === "media_api_unsupported" || message === "webrtc_unsupported") {
+    return "این مرورگر از پخش زنده پشتیبانی نمی‌کند. از نسخهٔ جدید Chrome, Edge یا Safari استفاده کنید.";
+  }
+  if (message.startsWith("signal_") || message === "Failed to fetch") {
+    return "اتصال پخش برقرار نشد. اینترنت را بررسی کنید و دوباره تلاش کنید.";
+  }
+  return "دسترسی به دوربین برقرار نشد. مجوزها و اتصال اینترنت را بررسی کنید و دوباره تلاش کنید.";
+}
+
 /* ─── Component ─────────────────────────────────────────────────── */
 
-export default function WebinarBroadcast({ slug }: { slug: string }) {
+export default function WebinarBroadcast({ slug, title }: { slug: string; title: string }) {
   const [status, setStatus] = useState<BroadcastStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [viewerCount, setViewerCount] = useState(0);
@@ -67,32 +101,54 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
   const [qa, setQa] = useState<QAQuestion[]>([]);
   const [activeTab, setActiveTab] = useState<"chat" | "qa">("chat");
   const [attendeesOpen, setAttendeesOpen] = useState(false);
+  const [turnConfigured, setTurnConfigured] = useState<boolean | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const iceServersRef = useRef<RTCIceServer[]>(DEFAULT_ICE_SERVERS);
   // Map viewerId → RTCPeerConnection
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Track which viewer answers we've already processed
   const processedAnswersRef = useRef<Set<string>>(new Set());
+  const liveRef = useRef(false);
+  const endBroadcastRef = useRef<() => Promise<void>>(async () => undefined);
+  useEffect(() => { liveRef.current = status === "live"; }, [status]);
 
-  const signalUrl = `/api/webinar/${slug}/signal`;
+  const signalUrl = `/api/webinar/${encodeURIComponent(slug)}/signal`;
 
   /* ── helpers ─────────────────────────────────────────────────── */
 
   async function postSignal(body: Record<string, unknown>) {
     const res = await fetch(signalUrl, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`signal ${res.status}`);
-    return res.json();
+    const payload = await res.json().catch(() => null) as { error?: unknown } | null;
+    if (!res.ok) {
+      throw new Error(typeof payload?.error === "string" ? payload.error : `signal_${res.status}`);
+    }
+    return payload ?? {};
+  }
+
+  async function loadIceServers() {
+    try {
+      const response = await fetch(`${signalUrl}?role=ice&client=broadcaster`, { credentials: "include", cache: "no-store" });
+      if (!response.ok) throw new Error("ice_configuration_unavailable");
+      const data = await response.json() as { iceServers?: RTCIceServer[]; turnConfigured?: boolean };
+      iceServersRef.current = data.iceServers?.length ? data.iceServers : DEFAULT_ICE_SERVERS;
+      setTurnConfigured(Boolean(data.turnConfigured));
+    } catch {
+      iceServersRef.current = DEFAULT_ICE_SERVERS;
+      setTurnConfigured(false);
+    }
   }
 
   const createPcForViewer = useCallback(
     (viewerId: string): RTCPeerConnection => {
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
 
       // Add local tracks
       if (streamRef.current) {
@@ -126,7 +182,7 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
 
   const pollBroadcaster = useCallback(async () => {
     try {
-      const res = await fetch(`${signalUrl}?role=broadcaster`, { cache: "no-store" });
+      const res = await fetch(`${signalUrl}?role=broadcaster`, { credentials: "include", cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json() as {
         viewers: { viewerId: string; answer: RTCSessionDescriptionInit | null; newIce: { candidate: string; sdpMid: string | null; sdpMLineIndex: number | null }[] }[];
@@ -136,7 +192,7 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
       };
 
       if (data.status === "ended") {
-        setStatus("ended");
+        void endBroadcastRef.current();
         return;
       }
 
@@ -179,23 +235,53 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
   const startBroadcast = useCallback(async () => {
     setStatus("starting");
     setError(null);
+    let stream: MediaStream | null = null;
+    let startRequested = false;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      if (!window.isSecureContext) throw new Error("https_required");
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("media_api_unsupported");
+      if (!("RTCPeerConnection" in window)) throw new Error("webrtc_unsupported");
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 24, max: 30 },
+        },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => undefined);
+      }
+      for (const track of stream.getTracks()) {
+        track.onended = () => { void endBroadcastRef.current(); };
       }
 
-      // Signal room as live
+      // Start the browser permission prompt immediately from the button gesture;
+      // load optional ICE settings only after the camera is available.
+      await loadIceServers();
       await postSignal({ type: "start" });
-
+      startRequested = true;
+      liveRef.current = true;
       setStatus("live");
-
-      // Start polling every 2 seconds
       pollTimerRef.current = setInterval(pollBroadcaster, 2000);
+      void pollBroadcaster();
     } catch (e) {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      if (startRequested) await postSignal({ type: "end" }).catch(() => undefined);
+      if (stream) {
+        for (const track of stream.getTracks()) {
+          track.onended = null;
+          track.stop();
+        }
+      }
+      if (streamRef.current === stream) streamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
       setStatus("error");
-      setError(e instanceof Error ? e.message : "خطا در دسترسی به دوربین/میکروفون");
+      setError(broadcastErrorMessage(e));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pollBroadcaster]);
@@ -204,23 +290,30 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
 
   const endBroadcast = useCallback(async () => {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    try {
-      await postSignal({ type: "end" });
-    } catch { /* best-effort */ }
+    pollTimerRef.current = null;
+    liveRef.current = false;
 
-    // Close all peer connections
+    // Stop the camera immediately on click, even if the network is slow.
     for (const pc of pcsRef.current.values()) pc.close();
     pcsRef.current.clear();
-
-    // Stop media tracks
     if (streamRef.current) {
-      for (const t of streamRef.current.getTracks()) t.stop();
+      for (const track of streamRef.current.getTracks()) {
+        track.onended = null;
+        track.stop();
+      }
       streamRef.current = null;
     }
     if (videoRef.current) videoRef.current.srcObject = null;
     setStatus("ended");
+
+    try {
+      await postSignal({ type: "end" });
+    } catch (error) {
+      setError(broadcastErrorMessage(error));
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
+  useEffect(() => { endBroadcastRef.current = endBroadcast; }, [endBroadcast]);
 
   /* ── audio / video toggle ────────────────────────────────────── */
 
@@ -243,19 +336,37 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
   /* ── cleanup on unmount ──────────────────────────────────────── */
 
   useEffect(() => {
+    const peerConnections = pcsRef.current;
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-      for (const pc of pcsRef.current.values()) pc.close();
-      if (streamRef.current) for (const t of streamRef.current.getTracks()) t.stop();
+      if (liveRef.current) {
+        void fetch(signalUrl, {
+          method: "POST",
+          credentials: "include",
+          keepalive: true,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "end" }),
+        }).catch(() => undefined);
+      }
+      for (const pc of peerConnections.values()) pc.close();
+      if (streamRef.current) {
+        for (const track of streamRef.current.getTracks()) {
+          track.onended = null;
+          track.stop();
+        }
+      }
     };
-  }, []);
+  }, [signalUrl]);
 
   /* ── answer Q&A ──────────────────────────────────────────────── */
 
   const markAnswered = async (id: string) => {
-    // Optimistic update
-    setQa((prev) => prev.map((q) => q.id === id ? { ...q, answered: true } : q));
-    // Note: real "mark answered" would need a dedicated endpoint; skipped for simplicity
+    try {
+      await postSignal({ type: "qa-answer", questionId: id });
+      setQa((prev) => prev.map((question) => question.id === id ? { ...question, answered: true } : question));
+    } catch {
+      setError("ثبت وضعیت پاسخ پرسش انجام نشد؛ دوباره تلاش کنید.");
+    }
   };
 
   /* ─── render ─────────────────────────────────────────────────── */
@@ -266,7 +377,10 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
       <div className="flex items-center justify-between px-6 py-3 bg-zinc-900 border-b border-zinc-800">
         <div className="flex items-center gap-3">
           <MonitorPlay className="w-5 h-5 text-rose-400" />
-          <span className="font-bold text-base">کنترل پخش زنده</span>
+          <div className="flex min-w-0 flex-col sm:flex-row sm:items-center sm:gap-2">
+            <span className="font-bold text-base">کنترل پخش زنده</span>
+            <span className="truncate text-xs text-zinc-400">{title}</span>
+          </div>
           {status === "live" && (
             <span className="flex items-center gap-1.5 text-xs font-semibold bg-red-600 text-white px-2.5 py-1 rounded-full">
               <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
@@ -286,6 +400,18 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
           </button>
         </div>
       </div>
+      <div className="border-b border-zinc-800 bg-zinc-900/60 px-6 py-2 text-[11px] leading-5 text-zinc-400">
+        <p>
+          {turnConfigured === null
+            ? "اتصال ICE/TURN هنگام شروع بررسی می‌شود. این پخش مستقیم WebRTC برای کلاس‌های کوچک است، نه پخش انبوه."
+            : turnConfigured
+              ? "TURN پیکربندی شده است، اما هر بیننده هنوز یک اتصال مستقیم می‌گیرد؛ پهنای‌باند میزبان با تعداد بینندگان افزایش می‌یابد و این مسیر SFU نیست."
+              : "TURN در محیط تنظیم نشده است؛ فقط STUN در دسترس است و برخی شبکه‌ها ممکن است وصل نشوند. برای مقیاس بالاتر، TURN/SFU لازم است."}
+        </p>
+        <p className="mt-0.5 text-zinc-500">
+          وضعیت سیگنالینگ این نسخه در حافظهٔ همین سرور است؛ برای اجرای چندنمونه‌ای، سرویس سیگنالینگ مشترک لازم است.
+        </p>
+      </div>
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Video preview ── */}
@@ -296,7 +422,10 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
                 {status === "idle" ? (
                   <>
                     <Radio className="w-16 h-16 mx-auto text-zinc-600" />
-                    <p className="text-zinc-400">برای شروع پخش کلیک کنید</p>
+                    <div className="space-y-2">
+                      <p className="text-zinc-200 font-medium">برای شروع، دکمهٔ پایین صفحه را بزنید و دسترسی دوربین/میکروفون را تأیید کنید.</p>
+                      <p className="text-xs text-zinc-500">صفحه باید HTTPS باشد؛ تا پایان کلاس این صفحه را باز نگه دارید.</p>
+                    </div>
                   </>
                 ) : (
                   <>
@@ -309,6 +438,7 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
               <div className="text-center space-y-3">
                 <CheckCircle2 className="w-16 h-16 mx-auto text-emerald-500" />
                 <p className="text-zinc-300 font-semibold">پخش پایان یافت</p>
+                {error && <p className="max-w-lg text-xs text-amber-300">{error}</p>}
               </div>
             ) : status === "error" ? (
               <div className="text-center space-y-3 px-6">
@@ -327,7 +457,7 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
               playsInline
               className={cn(
                 "absolute inset-0 w-full h-full object-cover transition-opacity",
-                status === "live" ? "opacity-100" : "opacity-0"
+                status === "live" || status === "starting" ? "opacity-100" : "opacity-0"
               )}
             />
 
@@ -354,7 +484,7 @@ export default function WebinarBroadcast({ slug }: { slug: string }) {
                 className="bg-red-600 hover:bg-red-700 text-white px-8 py-3 text-base font-semibold rounded-xl"
               >
                 <Radio className="w-5 h-5 ml-2" />
-                شروع پخش زنده
+                روشن کردن دوربین و شروع پخش
               </Button>
             ) : status === "starting" ? (
               <Button disabled className="px-8 py-3 text-base">

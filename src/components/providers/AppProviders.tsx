@@ -95,7 +95,7 @@ interface AuthCtx {
   user: User | null;
   /** false until the server session has been checked */
   ready: boolean;
-  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
+  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string; user?: User }>;
   signup: (
     name: string,
     email: string,
@@ -245,7 +245,9 @@ export function AppProviders({ locale, children }: { locale: Locale; children: R
   useEffect(() => {
     const version = sessionVersionRef.current;
     let active = true;
-    fetch("/api/auth/me", { ...SESSION_FETCH })
+    const isAdminArea = window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/");
+    const sessionEndpoint = isAdminArea ? "/api/admin/session" : "/api/auth/me";
+    fetch(sessionEndpoint, { ...SESSION_FETCH })
       .then((r) => (r.ok ? (r.json() as Promise<{ user: User | null }>) : Promise.reject()))
       .then((d) => {
         if (!active || sessionVersionRef.current !== version) return;
@@ -275,7 +277,7 @@ export function AppProviders({ locale, children }: { locale: Locale; children: R
           const d = (await r.json()) as { ok: boolean; user?: User; error?: string };
           if (r.ok && d.ok && d.user) {
             commitServerUser(d.user);
-            return { ok: true };
+            return { ok: true, user: d.user };
           }
           return { ok: false, error: d.error ?? "invalid" };
         } catch {

@@ -1145,25 +1145,6 @@ html[lang="fa"] .pf-hero-title span {
   font-size: 0.85rem !important;
 }
 
-.auth-card__admin-link {
-  margin-top: 12px;
-  text-align: center;
-  font-size: 0.75rem;
-  color: var(--foreground-secondary);
-}
-
-.auth-card__admin-link a {
-  color: inherit;
-  text-decoration: none;
-  opacity: 0.6;
-}
-
-.auth-card__admin-link a:hover {
-  opacity: 1;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
 /* Responsive: stack on mobile */
 @media (max-width: 640px) {
   .auth-card__bg,

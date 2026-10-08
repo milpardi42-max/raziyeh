@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getAdminSession } from "@/lib/auth";
 import { withNoStore } from "@/lib/http";
 import { addChatMessage, listChats, setChatStatus } from "@/lib/data/chats";
 
 export const dynamic = "force-dynamic";
 
 async function isAdmin() {
-  return (await getSession())?.role === "admin";
+  return (await getAdminSession())?.role === "admin";
 }
 
 export async function GET() {

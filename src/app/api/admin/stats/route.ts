@@ -1,13 +1,13 @@
 import { orderStatistics } from "@/lib/data/order-statistics";
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getAdminSession } from "@/lib/auth";
 import { getAllOrders } from "@/lib/data/orders";
 import { withNoStore } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const session = await getSession();
+  const session = await getAdminSession();
   if (!session || session.role !== "admin") {
     return NextResponse.json({ ok: false, error: "unauthorized" }, withNoStore({ status: 401 }));
   }

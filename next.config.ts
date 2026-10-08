@@ -11,12 +11,11 @@ const nextConfig: NextConfig = {
   distDir: "dist/.next",
   async redirects() {
     return [
-      // /fa/admin  →  /admin/fa/login
-      { source: "/fa/admin", destination: "/admin/fa/login", permanent: false },
-      // /en/admin  →  /admin/en/login
-      { source: "/en/admin", destination: "/admin/en/login", permanent: false },
-      // /admin  →  /admin/fa/login  (بدون locale)
-      { source: "/admin", destination: "/admin/fa/login", permanent: false },
+      // Resolve the short admin URL to the panel; middleware applies the current temporary access mode.
+      { source: "/admin", destination: "/admin/fa", permanent: false },
+      // Legacy locale-prefixed admin links land in the matching admin panel.
+      { source: "/fa/admin", destination: "/admin/fa", permanent: false },
+      { source: "/en/admin", destination: "/admin/en", permanent: false },
     ];
   },
   images: {

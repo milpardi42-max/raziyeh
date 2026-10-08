@@ -39,6 +39,7 @@ export function MediaUploadControl({
           unsupported_video_type: { fa: "فقط ویدئوی MP4 یا WebM پذیرفته می‌شود.", en: "Only MP4 and WebM videos are supported." },
           unsupported_type: { fa: "فرمت تصویر پشتیبانی نمی‌شود.", en: "Unsupported image format." },
           file_too_large: { fa: "حجم فایل بیش از حد مجاز است.", en: "The file exceeds the allowed size." },
+          content_length_required: { fa: "سرور اندازه درخواست آپلود را دریافت نکرد؛ محدودیت پراکسی را بررسی کنید.", en: "The server could not read the upload length; check the proxy upload limits." },
           invalid_video_data: { fa: "فایل ویدئو معتبر نیست یا با پسوند آن هم‌خوانی ندارد.", en: "Invalid video data or file extension mismatch." },
           invalid_image_data: { fa: "فایل تصویر معتبر نیست یا با پسوند آن هم‌خوانی ندارد.", en: "Invalid image data or file extension mismatch." },
           storage_error: { fa: "ذخیره‌سازی رسانه تنظیم نشده یا در دسترس نیست.", en: "Media storage is not configured or is unavailable." },

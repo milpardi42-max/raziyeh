@@ -21,6 +21,6 @@ export async function POST(req: Request) {
   }
   clearFailures(key);
   const res = NextResponse.json({ ok: true, user: result.user }, withNoStore());
-  res.cookies.set(SESSION_COOKIE, await createSessionToken(result.user), sessionCookieOptions());
+  res.cookies.set(SESSION_COOKIE, await createSessionToken(result.user), sessionCookieOptions(req));
   return res;
 }

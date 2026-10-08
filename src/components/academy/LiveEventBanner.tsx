@@ -6,10 +6,13 @@ import { Radio, CalendarClock, Clock, Users, ArrowUpRight } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useLocale } from "@/components/providers/AppProviders";
 import { cn, faNum, href, t } from "@/lib/utils";
+import { effectiveLiveStatus } from "@/lib/academy-live";
 import type { EnrichedEducation } from "@/lib/data/enrich";
+import type { LiveEventStatus } from "@/lib/types";
 
 interface Props {
   event: EnrichedEducation;
+  registeredCount?: number;
 }
 
 function msUntil(iso: string) {
@@ -17,7 +20,7 @@ function msUntil(iso: string) {
 }
 
 function useCountdown(startsAt: string | undefined, active: boolean) {
-  const [remaining, setRemaining] = useState(startsAt ? msUntil(startsAt) : 0);
+  const [remaining, setRemaining] = useState(0);
   useEffect(() => {
     if (!active || !startsAt) return;
     const tick = () => setRemaining(msUntil(startsAt));
@@ -40,11 +43,46 @@ function pad(n: number) {
   return String(n).padStart(2, "0");
 }
 
-export function LiveEventBanner({ event }: Props) {
+export function LiveEventBanner({ event, registeredCount: actualRegisteredCount }: Props) {
   const { locale, dict } = useLocale();
   const isFA = locale === "fa";
-  const isLive = event.liveEvent?.status === "live";
-  const isScheduled = event.liveEvent?.status === "scheduled";
+  const [now, setNow] = useState<number | null>(null);
+  const [roomStatus, setRoomStatus] = useState<LiveEventStatus | null>(null);
+  const hasLiveEvent = Boolean(event.liveEvent);
+  useEffect(() => {
+    setNow(Date.now());
+    if (!hasLiveEvent) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasLiveEvent]);
+  useEffect(() => {
+    setRoomStatus(null);
+    if (!hasLiveEvent || (event.type !== "webinar" && event.type !== "workshop")) return;
+    let active = true;
+    const refreshStatus = async () => {
+      try {
+        const response = await fetch(`/api/webinar/${encodeURIComponent(event.slug)}/signal?role=event`, { cache: "no-store" });
+        if (!response.ok) return;
+        const result = await response.json();
+        if (active && ["scheduled", "live", "ended", "cancelled"].includes(result.status)) {
+          setRoomStatus(result.status as LiveEventStatus);
+        }
+      } catch {
+        // Fall back to the saved schedule if live status cannot be reached.
+      }
+    };
+    void refreshStatus();
+    const timer = setInterval(() => void refreshStatus(), 5000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [event.slug, event.type, hasLiveEvent]);
+  const eventStatus = roomStatus ?? (now === null
+    ? event.liveEvent?.status
+    : effectiveLiveStatus(event.liveEvent, now));
+  const isLive = eventStatus === "live";
+  const isScheduled = eventStatus === "scheduled";
   const countdown = useCountdown(
     isScheduled ? event.liveEvent?.startsAt : undefined,
     isScheduled
@@ -57,7 +95,7 @@ export function LiveEventBanner({ event }: Props) {
   const excerpt = t(event.excerpt, locale);
   const typeLabel = dict.common[event.type];
   const capacity = event.liveEvent?.capacity ?? 0;
-  const registered = event.liveEvent?.registeredCount ?? 0;
+  const registered = actualRegisteredCount ?? event.liveEvent?.registeredCount ?? 0;
   const spotsLeft = capacity > 0 ? capacity - registered : null;
   const isFull = spotsLeft !== null && spotsLeft <= 0;
 
@@ -179,26 +217,27 @@ export function LiveEventBanner({ event }: Props) {
             href={url}
             className={cn(
               "inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold transition-all",
-              isLive
+              isLive && !isFull
                 ? "bg-red-600 text-white hover:bg-red-700 shadow-lg shadow-red-900/30"
                 : isFull
-                ? "bg-background-secondary text-muted cursor-not-allowed pointer-events-none"
+                ? "bg-background-secondary text-foreground-secondary hover:bg-background-secondary/80"
                 : "bg-accent text-white hover:bg-accent/90 shadow-lg shadow-accent/20"
             )}
           >
-            {isLive
-              ? isFA
-                ? "ورود به رویداد زنده"
-                : "Join Live Event"
-              : isFull
-              ? isFA
-                ? "ظرفیت تکمیل است"
-                : "Fully Booked"
-              : isFA
-              ? "ثبت‌نام در رویداد"
-              : "Register for Event"}
-            {!isFull && <ArrowUpRight className="h-4 w-4 rtl-flip arrow-shift" />}
+            {isFull
+              ? isFA ? "مشاهده رویداد" : "View event"
+              : isLive
+                ? isFA ? "ورود به رویداد زنده" : "Join Live Event"
+                : isFA ? "ثبت‌نام در رویداد" : "Register for Event"}
+            <ArrowUpRight className="h-4 w-4 rtl-flip arrow-shift" />
           </Link>
+          {isFull && (
+            <p className="max-w-xs text-caption text-muted md:text-end">
+              {isFA
+                ? "ظرفیت رزرو تکمیل شده؛ اگر قبلاً ثبت‌نام کرده‌اید، از صفحه رویداد وارد شوید."
+                : "Reservations are full. If you already registered, use the event page to join."}
+            </p>
+          )}
 
           {/* Spots left warning */}
           {!isLive && spotsLeft !== null && spotsLeft > 0 && spotsLeft <= 10 && (

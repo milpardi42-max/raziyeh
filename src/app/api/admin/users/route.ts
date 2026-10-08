@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getAdminSession } from "@/lib/auth";
 import { getAllUsers, toPublicUser, updateUser, saveAllUsers, createUser } from "@/lib/data/users";
 import { withNoStore } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
 async function requireAdmin() {
-  const session = await getSession();
+  const session = await getAdminSession();
   if (!session || session.role !== "admin") return null;
   return session;
 }

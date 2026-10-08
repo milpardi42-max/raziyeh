@@ -1,6 +1,7 @@
 import { artistPortfolioWorks } from "@/lib/artist/portfolio";
 import { getPortfolioCategories } from "@/lib/portfolio-categories";
-import type { Artist, EducationItem, Pattern, Portfolio, Product, SiteContent } from "../types";
+import type { Artist, CourseVideoFile, EducationItem, LiveEventConfig, Pattern, Portfolio, Product, SiteContent } from "../types";
+import { effectiveLiveStatus } from "../academy-live";
 
 export type Enriched<T> = T & { artist: Artist | null };
 
@@ -23,7 +24,7 @@ const ACADEMY_HOST: Artist = {
   slug: "razieh-khairipour",
   name: { fa: "راضیه خیری پور", en: "Razieh Khairipour" },
   profession: { fa: "مدرس و میزبان آکادمی", en: "Academy instructor and host" },
-  bio: { fa: "مدرس و میزبان ورکشاپ‌ها و وبینارهای آکادمی رزی.", en: "Instructor and host of Rosie Academy workshops and webinars." },
+  bio: { fa: "مدرس و میزبان ورکشاپ‌ها و وبینارهای آکادمی آتلیه رزی.", en: "Instructor and host of Rosie Atelier Academy workshops and webinars." },
   avatar: "/images/education/e01.jpg",
   cover: "/images/education/e01.jpg",
   location: { fa: "تهران", en: "Tehran" },
@@ -52,12 +53,31 @@ export function enrichPortfolio(site: SiteContent, p: Portfolio) {
     products: p.productIds.map((id) => productById(site, id)).filter(Boolean) as Product[],
   };
 }
+function publicVideoFile(video: CourseVideoFile): Omit<CourseVideoFile, "storageKey"> {
+  const safe = { ...video };
+  delete safe.storageKey;
+  return { ...safe, url: `/api/academy/videos/${encodeURIComponent(video.id)}` };
+}
+
+function publicLiveEvent(event: LiveEventConfig | undefined): Omit<LiveEventConfig, "meetLink" | "recordingUrl" | "recordingDownloadable" | "recordingPublic" | "webinarStream"> | undefined {
+  if (!event) return undefined;
+  const safe = { ...event };
+  delete safe.meetLink;
+  delete safe.recordingUrl;
+  delete safe.recordingDownloadable;
+  delete safe.recordingPublic;
+  delete safe.webinarStream;
+  return { ...safe, status: effectiveLiveStatus(event) ?? event.status };
+}
+
 export function enrichEducation(site: SiteContent, e: EducationItem) {
   const author = e.type === "workshop" || e.type === "webinar"
     ? site.artists.find((artist) => artist.id === "artist-razieh-khairipour") ?? ACADEMY_HOST
     : artistOf(site, e.authorId);
   return {
     ...e,
+    videoFiles: e.videoFiles?.map(publicVideoFile),
+    liveEvent: publicLiveEvent(e.liveEvent),
     author,
     category: categoryOf(site, e.categoryId),
     patterns: e.patternIds.map((id) => patternById(site, id)).filter(Boolean) as Pattern[],

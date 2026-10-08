@@ -1,5 +1,6 @@
 import "server-only";
 import type { AcademyReservation, CourseVideoFile, EducationItem, SiteContent } from "../types";
+import { effectiveLiveStatus } from "../academy-live";
 import { getAllReservations } from "./reservations";
 
 /**
@@ -61,10 +62,12 @@ export function lessonMinutes(item: EducationItem): number {
   return listed || item.durationMin || 0;
 }
 
-/** The video the hero plays: a free preview if one was uploaded, otherwise the first video. */
+/** The homepage hero may only play a lesson explicitly marked as a free preview. */
 export function previewVideoOf(item: EducationItem | null | undefined): CourseVideoFile | null {
-  if (!item?.videoFiles?.length) return null;
-  return item.videoFiles.find((video) => video.free) ?? item.videoFiles[0];
+  if (!item) return null;
+  return item.videoFiles?.find((video) =>
+    video.free === true || item.lessonList?.some((lesson) => lesson.id === video.lessonId && lesson.free === true),
+  ) ?? null;
 }
 
 export function academyOverview(site: SiteContent, reservations: AcademyReservation[]): AcademyOverview {
@@ -121,8 +124,8 @@ export function academyOverview(site: SiteContent, reservations: AcademyReservat
     categories: categoriesUsed.size,
     enrollments: active.length,
     students: new Set(active.map((reservation) => reservation.email.trim().toLowerCase())).size,
-    upcomingEvents: site.education.filter((item) => item.liveEvent?.status === "scheduled").length,
-    liveNow: site.education.filter((item) => item.liveEvent?.status === "live").length,
+    upcomingEvents: site.education.filter((item) => effectiveLiveStatus(item.liveEvent) === "scheduled").length,
+    liveNow: site.education.filter((item) => effectiveLiveStatus(item.liveEvent) === "live").length,
     bySlug,
     instructorStats: [...instructors.values()].sort((a, b) => b.lessons - a.lessons || b.items - a.items),
   };

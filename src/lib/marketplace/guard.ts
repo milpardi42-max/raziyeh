@@ -1,6 +1,6 @@
 import "server-only";
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getAdminSession, getSession } from "@/lib/auth";
 import { withNoStore } from "@/lib/http";
 import { clientIp } from "@/lib/rate-limit";
 import type { SessionUser } from "@/lib/session";
@@ -39,7 +39,7 @@ export async function requireArtistOrAdmin(): Promise<{ user: SessionUser } | { 
 }
 
 export async function requireAdmin(): Promise<{ user: SessionUser } | { response: NextResponse }> {
-  const user = await getSession();
+  const user = await getAdminSession();
   if (!user) return { response: fail("unauthorized", 401) };
   if (user.role !== "admin") return { response: fail("forbidden", 403) };
   return { user };

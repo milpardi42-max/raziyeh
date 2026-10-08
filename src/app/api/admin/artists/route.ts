@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getAdminSession } from "@/lib/auth";
 import { getContent, updateCollection } from "@/lib/data/store";
 import { getAllUsers, saveAllUsers } from "@/lib/data/users";
 import { withNoStore } from "@/lib/http";
@@ -8,7 +8,7 @@ import type { ArtistStatus } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 async function requireAdmin() {
-  const session = await getSession();
+  const session = await getAdminSession();
   return session?.role === "admin" ? session : null;
 }
 

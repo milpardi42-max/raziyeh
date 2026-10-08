@@ -4,7 +4,7 @@ import { publicMediaMime, streamPublicMedia } from "@/lib/media-storage";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const ID_PATTERN = /^[a-f0-9]{32}\.(?:jpg|png|webp|avif|mp4|webm)$/;
+const ID_PATTERN = /^[a-f0-9]{32}\.(?:jpg|png|webp|avif)$/;
 
 type RouteContext = { params: Promise<{ id: string }> };
 

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
@@ -13,7 +12,7 @@ import { useAuth } from "@/components/providers/AppProviders";
 interface LoginShellProps {
   locale: Locale;
   image: string;
-  dict: { login: string; signup: string; admin: string };
+  dict: { login: string; signup: string };
 }
 
 export function LoginShell({ locale, image, dict }: LoginShellProps) {
@@ -124,11 +123,6 @@ export function LoginShell({ locale, image, dict }: LoginShellProps) {
                 prefill={prefill ?? undefined}
                 autoSubmitting={isSubmitting}
               />
-              <p className="auth-card__admin-link">
-                <Link href={href(locale, "/admin")}>
-                  {dict.admin}
-                </Link>
-              </p>
             </>
           )}
         </div>

@@ -4,7 +4,7 @@ import { firstPartyMediaUrl } from "@/lib/media-storage";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif", "video/mp4", "video/webm"]);
+const TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
 
 /**
  * Transitional same-origin proxy for old public Cloudinary/Vercel uploads.
