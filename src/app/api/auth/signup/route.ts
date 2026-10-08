@@ -59,7 +59,7 @@ export async function POST(req: Request) {
     const pub = toPublicUser(stored);
     const session = publicUserToSession(pub);
     const res = NextResponse.json({ ok: true, user: session }, withNoStore());
-    res.cookies.set(SESSION_COOKIE, await createSessionToken(session), sessionCookieOptions());
+    res.cookies.set(SESSION_COOKIE, await createSessionToken(session), sessionCookieOptions(req));
     return res;
   } catch (e) {
     if (e instanceof Error && e.message === "email_taken") {

@@ -9,7 +9,7 @@ export const artists: Artist[] = [
     id: "artist-razieh-khairipour", slug: "razieh-khairipour",
     name: L("راضیه خیری پور", "Razieh Khairipour"),
     profession: L("طراح پارچه، رنگ و پوشاک؛ مدرس آکادمی", "Textile, colour & wearable designer; academy instructor"),
-    bio: L("راضیه خیری‌پور در پیوند میان طراحی و ساخت پارچه، رنگ‌آمیزی و طراحی جلیقه کار می‌کند؛ نگاهی که در آن بافت و رنگ، به زبان پوشاک تبدیل می‌شوند. او همچنین مدرس و میزبان برنامه‌های آکادمی رزی است.", "Razieh Khairipour works across textile design and construction, colour work, and vest design—bringing texture and colour into the language of clothing. She is also an instructor and host at Rosie Academy."),
+    bio: L("راضیه خیری‌پور در پیوند میان طراحی و ساخت پارچه، رنگ‌آمیزی و طراحی جلیقه کار می‌کند؛ نگاهی که در آن بافت و رنگ، به زبان پوشاک تبدیل می‌شوند. او همچنین مدرس و میزبان برنامه‌های آکادمی آتلیه رزی است.", "Razieh Khairipour works across textile design and construction, colour work, and vest design—bringing texture and colour into the language of clothing. She is also an instructor and host at Rosie Atelier Academy."),
     avatar: "/images/education/e01.jpg", cover: "/images/education/e01.jpg",
     location: L("تهران", "Tehran"),
     social: {},

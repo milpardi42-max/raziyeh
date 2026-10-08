@@ -21,7 +21,7 @@ export default async function LoginPage({ params }: { params: Promise<{ locale: 
     <LoginShell
       locale={locale}
       image={image}
-      dict={{ login: d.nav.login, signup: d.nav.signup, admin: d.nav.admin }}
+      dict={{ login: d.nav.login, signup: d.nav.signup }}
     />
   );
 }

@@ -1,13 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { Frame, Lock, Mail, Eye, EyeOff, AlertCircle } from "lucide-react";
 import { useAuth } from "@/components/providers/AppProviders";
 
 export default function AdminLoginPage({ params }: { params: Promise<{ locale: string }> }) {
   const { user, ready, login } = useAuth();
-  const router = useRouter();
 
   const [locale, setLocale] = useState("fa");
   const [email, setEmail] = useState("");
@@ -23,9 +21,11 @@ export default function AdminLoginPage({ params }: { params: Promise<{ locale: s
   // اگر ادمین وارد شده، به پنل هدایت شود
   useEffect(() => {
     if (ready && user?.role === "admin") {
-      router.replace(`/admin/${locale}`);
+      // A full same-origin navigation makes the browser send the freshly set
+      // HttpOnly session cookie through preview proxies before middleware runs.
+      window.location.replace(`/admin/${locale}`);
     }
-  }, [ready, user, router, locale]);
+  }, [ready, user, locale]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,6 +43,11 @@ export default function AdminLoginPage({ params }: { params: Promise<{ locale: s
       );
       return;
     }
+    if (result.user?.role !== "admin") {
+      setError("این حساب کاربری دسترسی ورود به پنل مدیریت را ندارد.");
+      return;
+    }
+    window.location.replace(`/admin/${locale}`);
   };
 
   return (

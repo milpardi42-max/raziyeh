@@ -12,7 +12,7 @@
  *  - نرخ پر شدن ظرفیت وبینارها / ورکشاپ‌ها
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   BarChart2,
   Calendar,
@@ -28,11 +28,11 @@ import {
   Video,
   Zap,
   AlertCircle,
-  Copy,
   Eye,
 } from "lucide-react";
 import Link from "next/link";
 import { cn, href, t } from "@/lib/utils";
+import { effectiveLiveStatus, isFreePrice } from "@/lib/academy-live";
 import type { EducationItem } from "@/lib/types";
 import type { Locale } from "@/lib/i18n/types";
 
@@ -154,11 +154,16 @@ type AnalyticsFilter = "all" | "webinar" | "workshop" | "course";
 export function AcademyAnalytics({
   items,
   locale,
+  registrationsBySlug,
 }: {
   items: EducationItem[];
   locale: Locale;
+  registrationsBySlug: Record<string, number> | null;
 }) {
   const [filter, setFilter] = useState<AnalyticsFilter>("all");
+  const registrationCountFor = useCallback((item: EducationItem) => registrationsBySlug
+    ? registrationsBySlug[item.slug] ?? 0
+    : item.liveEvent?.registeredCount ?? 0, [registrationsBySlug]);
 
   /* ── computed stats ── */
   const stats = useMemo(() => {
@@ -166,32 +171,36 @@ export function AcademyAnalytics({
     const workshops = items.filter((i) => i.type === "workshop");
     const webinars  = items.filter((i) => i.type === "webinar");
 
-    const liveNow    = items.filter((i) => i.liveEvent?.status === "live");
-    const scheduled  = items.filter((i) => i.liveEvent?.status === "scheduled");
-    const ended      = items.filter((i) => i.liveEvent?.status === "ended");
-    const freeItems  = items.filter((i) => !i.price || i.price.fa === 0);
-    const paidItems  = items.filter((i) => i.price && i.price.fa > 0);
+    const liveItems = items.filter((item) => item.type !== "course" && item.liveEvent);
+    const liveNow    = liveItems.filter((i) => effectiveLiveStatus(i.liveEvent) === "live");
+    const scheduled  = liveItems.filter((i) => effectiveLiveStatus(i.liveEvent) === "scheduled");
+    const ended      = liveItems.filter((i) => effectiveLiveStatus(i.liveEvent) === "ended");
+    const freeItems  = items.filter((i) => isFreePrice(i.price));
+    const paidItems  = items.filter((i) => !isFreePrice(i.price));
 
-    const totalRegistered = items.reduce((s, i) => s + (i.liveEvent?.registeredCount ?? 0), 0);
-    const totalCapacity   = items.reduce((s, i) => s + (i.liveEvent?.capacity ?? 0), 0);
-    const totalVideos     = items.reduce((s, i) => s + (i.videoFiles?.length ?? 0), 0);
-    const totalRevEst     = items.reduce((s, i) => {
-      if (!i.price?.fa || !i.liveEvent?.registeredCount) return s;
-      return s + i.price.fa * i.liveEvent.registeredCount;
+    const totalRegistered = items.reduce((sum, item) => sum + registrationCountFor(item), 0);
+    const totalCapacity   = liveItems.reduce((sum, item) => sum + (item.liveEvent?.capacity ?? 0), 0);
+    const eventRegistrations = liveItems.reduce((sum, item) => sum + registrationCountFor(item), 0);
+    const totalVideos     = items.reduce((sum, item) => sum + (item.videoFiles?.length ?? 0), 0);
+    const totalRevEst     = items.reduce((sum, item) => {
+      const registered = registrationCountFor(item);
+      if (!item.price?.fa || !registered) return sum;
+      return sum + item.price.fa * registered;
     }, 0);
 
-    // Top 5 by registered count
+    // Top 5 by real active registrations (course enrolments and live-event reservations).
     const byRegistered = [...items]
-      .filter((i) => i.liveEvent && i.liveEvent.registeredCount > 0)
-      .sort((a, b) => (b.liveEvent?.registeredCount ?? 0) - (a.liveEvent?.registeredCount ?? 0))
+      .filter((item) => registrationCountFor(item) > 0)
+      .sort((a, b) => registrationCountFor(b) - registrationCountFor(a))
       .slice(0, 5);
 
     // Live events
-    const liveEvents = items
-      .filter((i) => i.liveEvent)
+    const liveEvents = [...liveItems]
       .sort((a, b) => {
         const order: Record<string, number> = { live: 0, scheduled: 1, ended: 2, cancelled: 3 };
-        return (order[a.liveEvent!.status] ?? 9) - (order[b.liveEvent!.status] ?? 9);
+        const aStatus = effectiveLiveStatus(a.liveEvent) ?? "ended";
+        const bStatus = effectiveLiveStatus(b.liveEvent) ?? "ended";
+        return (order[aStatus] ?? 9) - (order[bStatus] ?? 9);
       });
 
     return {
@@ -199,23 +208,23 @@ export function AcademyAnalytics({
       courses, workshops, webinars,
       liveNow, scheduled, ended,
       freeItems, paidItems,
-      totalRegistered, totalCapacity, totalVideos, totalRevEst,
+      totalRegistered, eventRegistrations, totalCapacity, totalVideos, totalRevEst,
       byRegistered, liveEvents,
-      capacityFillPct: totalCapacity > 0 ? pct(totalRegistered, totalCapacity) : null,
+      capacityFillPct: totalCapacity > 0 ? pct(eventRegistrations, totalCapacity) : null,
     };
-  }, [items]);
+  }, [items, registrationCountFor]);
 
   /* ── filtered events table ── */
   const tableItems = useMemo(() => {
     const base = filter === "all"
-      ? items.filter((i) => i.liveEvent)
+      ? items.filter((i) => i.type !== "course" && i.liveEvent)
       : filter === "course"
       ? items.filter((i) => i.type === "course")
       : items.filter((i) => i.type === filter && i.liveEvent);
     return [...base].sort((a, b) => {
       const order: Record<string, number> = { live: 0, scheduled: 1, ended: 2, cancelled: 3 };
-      const sa = a.liveEvent?.status ?? "ended";
-      const sb = b.liveEvent?.status ?? "ended";
+      const sa = effectiveLiveStatus(a.liveEvent) ?? "ended";
+      const sb = effectiveLiveStatus(b.liveEvent) ?? "ended";
       return (order[sa] ?? 9) - (order[sb] ?? 9);
     });
   }, [items, filter]);
@@ -243,12 +252,12 @@ export function AcademyAnalytics({
       ...tableItems.map((i) => [
         `"${t(i.title, "fa")}"`,
         `"${TYPE_LABEL[i.type]}"`,
-        `"${i.liveEvent ? STATUS_META[i.liveEvent.status]?.label ?? i.liveEvent.status : "—"}"`,
+        `"${i.liveEvent ? STATUS_META[effectiveLiveStatus(i.liveEvent) ?? i.liveEvent.status]?.label ?? i.liveEvent.status : "—"}"`,
         `"${i.liveEvent?.startsAt ? fmtDate(i.liveEvent.startsAt) : "—"}"`,
-        i.liveEvent?.registeredCount ?? "—",
-        i.liveEvent?.capacity ?? "—",
-        i.liveEvent?.capacity
-          ? `${pct(i.liveEvent.registeredCount, i.liveEvent.capacity)}٪`
+        registrationCountFor(i),
+        i.type === "course" ? "—" : i.liveEvent?.capacity ?? "—",
+        i.type !== "course" && i.liveEvent?.capacity
+          ? `${pct(registrationCountFor(i), i.liveEvent.capacity)}٪`
           : "—",
         i.price?.fa ?? 0,
       ].join(",")),
@@ -319,7 +328,7 @@ export function AcademyAnalytics({
           color="rose"
           highlight={stats.liveNow.length > 0}
         />
-        <KpiCard icon={<Users className="h-4 w-4" />}         label="کل ثبت‌نام"     value={stats.totalRegistered} color="purple" sub={stats.totalCapacity > 0 ? `از ${fmtNum(stats.totalCapacity)} ظرفیت` : undefined} />
+        <KpiCard icon={<Users className="h-4 w-4" />}         label="کل ثبت‌نام"     value={stats.totalRegistered} color="purple" sub={stats.totalCapacity > 0 ? `${fmtNum(stats.eventRegistrations)} ثبت‌نام رویداد از ${fmtNum(stats.totalCapacity)} ظرفیت` : undefined} />
         <KpiCard icon={<Video className="h-4 w-4" />}         label="ویدیوی آپلودشده" value={stats.totalVideos}      color="amber" />
       </div>
 
@@ -329,16 +338,16 @@ export function AcademyAnalytics({
         <KpiCard icon={<CheckCircle2 className="h-4 w-4" />} label="رویداد پایان‌یافته"    value={stats.ended.length}     color="blue" />
         <KpiCard
           icon={<TrendingUp className="h-4 w-4" />}
-          label="درآمد تخمینی"
+          label="ارزش اسمی ثبت‌نام‌ها"
           value={fmtPrice(stats.totalRevEst)}
-          sub="بر اساس ثبت‌نام × قیمت"
+          sub="قیمت × ثبت‌نام؛ درآمد پرداخت‌شده نیست"
           color="emerald"
         />
         <KpiCard
           icon={<Star className="h-4 w-4" />}
           label="نرخ پر شدن ظرفیت"
           value={stats.capacityFillPct !== null ? `${stats.capacityFillPct}٪` : "—"}
-          sub={stats.totalCapacity > 0 ? `${fmtNum(stats.totalRegistered)} از ${fmtNum(stats.totalCapacity)}` : "ظرفیت نامحدود"}
+          sub={stats.totalCapacity > 0 ? `${fmtNum(stats.eventRegistrations)} از ${fmtNum(stats.totalCapacity)} ثبت‌نام رویداد` : "ظرفیت نامحدود"}
           color="purple"
         />
       </div>
@@ -385,16 +394,16 @@ export function AcademyAnalytics({
         <div className="rounded-xl border border-border bg-white p-5 space-y-4">
           <h4 className="font-semibold text-sm text-foreground flex items-center gap-2">
             <Users className="h-4 w-4 text-accent" />
-            ۵ رویداد برتر (بیشترین ثبت‌نام)
+            ۵ محتوای برتر (بیشترین ثبت‌نام)
           </h4>
           {stats.byRegistered.length === 0 ? (
             <p className="text-sm text-muted text-center py-8">هنوز ثبت‌نامی ثبت نشده</p>
           ) : (
             <div className="space-y-3">
               {stats.byRegistered.map((item, i) => {
-                const reg = item.liveEvent?.registeredCount ?? 0;
-                const cap = item.liveEvent?.capacity ?? 0;
-                const max = stats.byRegistered[0]?.liveEvent?.registeredCount ?? 1;
+                const reg = registrationCountFor(item);
+                const cap = item.type === "course" ? 0 : item.liveEvent?.capacity ?? 0;
+                const max = registrationCountFor(stats.byRegistered[0]!) || 1;
                 return (
                   <div key={item.id} className="flex items-center gap-3">
                     <span className="w-5 shrink-0 text-center text-xs font-bold text-muted">
@@ -475,11 +484,11 @@ export function AcademyAnalytics({
                 </tr>
               ) : (
                 tableItems.map((item) => {
-                  const ls = item.liveEvent?.status;
+                  const ls = effectiveLiveStatus(item.liveEvent) ?? undefined;
                   const statusMeta = ls ? STATUS_META[ls] : null;
-                  const reg = item.liveEvent?.registeredCount ?? 0;
-                  const cap = item.liveEvent?.capacity ?? 0;
-                  const isFree = !item.price || item.price.fa === 0;
+                  const reg = registrationCountFor(item);
+                  const cap = item.type === "course" ? 0 : item.liveEvent?.capacity ?? 0;
+                  const isFree = isFreePrice(item.price);
 
                   return (
                     <tr key={item.id} className="hover:bg-background-secondary/50 transition-colors">
@@ -520,7 +529,7 @@ export function AcademyAnalytics({
 
                       {/* Capacity bar */}
                       <td className="px-4 py-3">
-                        {item.liveEvent ? (
+                        {item.type !== "course" && item.liveEvent ? (
                           <CapacityBar registered={reg} capacity={cap} />
                         ) : (
                           <span className="text-xs text-muted">—</span>
@@ -545,7 +554,7 @@ export function AcademyAnalytics({
                           >
                             <Eye className="h-3.5 w-3.5" />
                           </Link>
-                          {(item.type === "webinar" || item.type === "workshop") && item.liveEvent?.status === "live" && (
+                          {(item.type === "webinar" || item.type === "workshop") && effectiveLiveStatus(item.liveEvent) === "live" && (
                             <Link
                               href={href(locale, `/academy/${item.slug}/broadcast`)}
                               target="_blank"
@@ -578,14 +587,14 @@ export function AcademyAnalytics({
         {/* Table footer */}
         <div className="border-t border-border bg-background-secondary px-5 py-2.5 text-xs text-muted flex items-center justify-between">
           <span>{fmtNum(tableItems.length)} رویداد نمایش داده می‌شود</span>
-          <span>کل ثبت‌نام: <strong className="text-foreground">{fmtNum(tableItems.reduce((s, i) => s + (i.liveEvent?.registeredCount ?? 0), 0))}</strong></span>
+          <span>کل ثبت‌نام: <strong className="text-foreground">{fmtNum(tableItems.reduce((sum, item) => sum + registrationCountFor(item), 0))}</strong></span>
         </div>
       </div>
 
       {/* ── Capacity fill warning ── */}
       {stats.liveEvents.filter((e) => {
         const cap = e.liveEvent?.capacity ?? 0;
-        const reg = e.liveEvent?.registeredCount ?? 0;
+        const reg = registrationCountFor(e);
         return cap > 0 && pct(reg, cap) >= 80;
       }).length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2">
@@ -597,14 +606,14 @@ export function AcademyAnalytics({
             {stats.liveEvents
               .filter((e) => {
                 const cap = e.liveEvent?.capacity ?? 0;
-                const reg = e.liveEvent?.registeredCount ?? 0;
+                const reg = registrationCountFor(e);
                 return cap > 0 && pct(reg, cap) >= 80;
               })
               .map((e) => (
                 <div key={e.id} className="flex items-center gap-3 text-sm text-amber-700">
                   <span className="flex-1 truncate font-medium">{t(e.title, "fa")}</span>
                   <CapacityBar
-                    registered={e.liveEvent!.registeredCount}
+                    registered={registrationCountFor(e)}
                     capacity={e.liveEvent!.capacity}
                   />
                 </div>

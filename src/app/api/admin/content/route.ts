@@ -1,18 +1,18 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getAdminSession } from "@/lib/auth";
 import { withNoStore } from "@/lib/http";
-import { getContent, getContentWithEtag, resetContent, saveContent } from "@/lib/data/store";
+import { getContentWithEtag, resetContent, saveContent } from "@/lib/data/store";
 import type { SiteContent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Admin content API — protected by the signed HttpOnly session cookie (see src/lib/auth.ts).
- * Every answer is private + no-store: it is keyed on the session cookie, so it can never be cached
- * in a shared/edge layer where another (anonymous) visitor — or a logged-out admin — would read it.
+ * Admin content API. Admin authentication is normally required; the temporary
+ * ADMIN_LOGIN_DISABLED mode intentionally makes it public until that flag is turned off.
+ * Every answer remains private + no-store so a shared/edge cache cannot expose mutable admin data.
  */
 async function requireAdmin() {
-  const user = await getSession();
+  const user = await getAdminSession();
   return user?.role === "admin" ? user : null;
 }
 

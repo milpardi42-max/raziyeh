@@ -49,7 +49,7 @@ interface QAQuestion {
 
 type ViewerStatus = "waiting" | "connecting" | "watching" | "ended" | "error";
 
-const ICE_SERVERS: RTCIceServer[] = [
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
@@ -68,9 +68,10 @@ export default function WebinarViewer({
   eventStatus = "live",
   chatEnabled = true,
   qaEnabled = true,
+  requiresAccount = false,
   prefillName = "",
   prefillEmail = "",
-  externalUrl,
+  hlsUrl,
   locale = "fa",
 }: {
   slug: string;
@@ -84,9 +85,11 @@ export default function WebinarViewer({
   eventStatus?: "scheduled" | "live" | "ended" | "cancelled";
   chatEnabled?: boolean;
   qaEnabled?: boolean;
+  requiresAccount?: boolean;
   prefillName?: string;
   prefillEmail?: string;
-  externalUrl?: string;
+  /** Same-origin entitlement-checked HLS proxy; external HLS URLs are never passed to the browser. */
+  hlsUrl?: string;
   locale?: "fa" | "en";
 }) {
   const isFA = locale === "fa";
@@ -96,13 +99,15 @@ export default function WebinarViewer({
   const [identity, setIdentity] = useState<JoinIdentity | null>(null);
 
   const [status, setStatus] = useState<ViewerStatus>("waiting");
+  const [activeEventStatus, setActiveEventStatus] = useState(eventStatus);
+  const [iceServers, setIceServers] = useState<RTCIceServer[]>(DEFAULT_ICE_SERVERS);
   const [error, setError] = useState<string | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [qa, setQa] = useState<QAQuestion[]>([]);
   const [activeTab, setActiveTab] = useState<"chat" | "qa">("chat");
   const [chatInput, setChatInput] = useState("");
   const [qaInput, setQaInput] = useState("");
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(Boolean(hlsUrl));
   const [sideOpen, setSideOpen] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -112,13 +117,41 @@ export default function WebinarViewer({
   const iceAppliedCountRef = useRef(0);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
-  const signalUrl = `/api/webinar/${slug}/signal`;
+  const signalUrl = `/api/webinar/${encodeURIComponent(slug)}/signal`;
+
+  // Keep the entry screen in sync when the host starts or ends the camera from the admin panel.
+  useEffect(() => {
+    if (phase !== "gate") return;
+    let active = true;
+    const refreshEventStatus = async () => {
+      try {
+        const response = await fetch(`${signalUrl}?role=event`, { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json() as { status?: string };
+        if (!active) return;
+        if (data.status === "scheduled" || data.status === "live" || data.status === "ended" || data.status === "cancelled") {
+          setActiveEventStatus(data.status);
+        }
+      } catch {
+        // The initial server-rendered schedule remains usable if live status polling is unavailable.
+      }
+    };
+    void refreshEventStatus();
+    const timer = setInterval(() => void refreshEventStatus(), 5_000);
+    return () => { active = false; clearInterval(timer); };
+  }, [phase, signalUrl]);
 
   /* ── handle join from gate ───────────────────────────────────── */
 
   const handleJoin = (id: JoinIdentity) => {
-    if (externalUrl) {
-      window.location.assign(externalUrl);
+    if (id.joinUrl) {
+      try {
+        const target = new URL(id.joinUrl);
+        if (target.protocol !== "https:") throw new Error("unsafe meeting URL");
+        window.location.assign(target.href);
+      } catch {
+        setError(isFA ? "لینک جلسه معتبر نیست." : "The meeting link is invalid.");
+      }
       return;
     }
     setIdentity(id);
@@ -130,21 +163,93 @@ export default function WebinarViewer({
   const postSignal = useCallback(async (body: Record<string, unknown>) => {
     const res = await fetch(signalUrl, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...body, viewerId: identity?.viewerId }),
     });
     if (!res.ok) throw new Error(`signal ${res.status}`);
     return res.json() as Promise<unknown>;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signalUrl, identity?.viewerId]);
+
+  /* ── external HLS playback (same-origin proxy only) ─────────── */
+  useEffect(() => {
+    if (phase !== "room" || !hlsUrl || !identity || activeEventStatus !== "live") return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    let cancelled = false;
+    let hls: { destroy: () => void } | null = null;
+    const markPlaying = () => setStatus("watching");
+    const markError = () => {
+      setStatus("error");
+      setError(isFA ? "پخش زنده در دسترس نیست. اتصال یا تنظیم استریم را بررسی کنید." : "The live stream is unavailable. Check the connection or stream settings.");
+    };
+    video.addEventListener("playing", markPlaying);
+    video.addEventListener("error", markError);
+    setStatus("connecting");
+
+    void (async () => {
+      try {
+        if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = hlsUrl;
+          setStatus("watching");
+          await video.play().catch(() => undefined);
+          return;
+        }
+        const hlsModule = await import("hls.js");
+        if (cancelled) return;
+        const Hls = hlsModule.default;
+        if (!Hls.isSupported()) {
+          markError();
+          return;
+        }
+        const player = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30 });
+        hls = player;
+        player.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (cancelled) return;
+          setStatus("watching");
+          void video.play().catch(() => undefined);
+        });
+        player.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) markError();
+        });
+        player.attachMedia(video);
+        player.loadSource(hlsUrl);
+      } catch {
+        if (!cancelled) markError();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      video.removeEventListener("playing", markPlaying);
+      video.removeEventListener("error", markError);
+      hls?.destroy();
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [phase, hlsUrl, identity, activeEventStatus, isFA]);
+
+  useEffect(() => {
+    if (phase !== "room" || !identity || hlsUrl) return;
+    let cancelled = false;
+    void fetch(`${signalUrl}?role=ice&viewerId=${encodeURIComponent(identity.viewerId)}`, { credentials: "include", cache: "no-store" })
+      .then(async (response) => response.ok ? await response.json() as { iceServers?: RTCIceServer[] } : null)
+      .then((data) => { if (!cancelled && data?.iceServers?.length) setIceServers(data.iceServers); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [phase, identity, signalUrl, hlsUrl]);
 
   /* ── initial join signal once in room ───────────────────────── */
 
   useEffect(() => {
     if (phase !== "room" || !identity) return;
-    void postSignal({ type: "join", name: identity.name }).catch(console.error);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, identity?.viewerId]);
+    void postSignal({ type: "join", name: identity.name }).catch(() => {
+      setStatus("error");
+      setError(isFA ? "اتصال ورود به اتاق برقرار نشد؛ صفحه را دوباره بارگذاری کنید." : "Could not join the live room. Please reload and try again.");
+    });
+  }, [phase, identity, postSignal, isFA]);
 
   /* ── poll viewer endpoint ────────────────────────────────────── */
 
@@ -154,7 +259,14 @@ export default function WebinarViewer({
       const res = await fetch(`${signalUrl}?role=viewer&viewerId=${identity.viewerId}`, {
         cache: "no-store",
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403 || res.status === 404) {
+          setStatus("error");
+          setError(isFA ? "دسترسی این جلسه یا اتصال آن منقضی شده است. دوباره از صفحه رویداد وارد شوید." : "Session access or live-room connection expired. Rejoin from the event page.");
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+        }
+        return;
+      }
 
       const data = await res.json() as {
         status: string;
@@ -164,7 +276,11 @@ export default function WebinarViewer({
         qa: QAQuestion[];
       };
 
-      if (data.status === "ended") {
+      const resolvedStatus = data.status === "live" || data.status === "ended" || data.status === "cancelled" || data.status === "scheduled"
+        ? data.status
+        : eventStatus;
+      setActiveEventStatus(resolvedStatus);
+      if (resolvedStatus === "ended" || resolvedStatus === "cancelled") {
         setStatus("ended");
         if (pollTimerRef.current) clearInterval(pollTimerRef.current);
         return;
@@ -172,13 +288,14 @@ export default function WebinarViewer({
 
       setChat(data.chat ?? []);
       setQa(data.qa ?? []);
+      if (hlsUrl) return;
 
       // Process offer (once)
       if (data.offer && !hasAnsweredRef.current) {
         hasAnsweredRef.current = true;
         setStatus("connecting");
 
-        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        const pc = new RTCPeerConnection({ iceServers });
         pcRef.current = pc;
 
         pc.onicecandidate = (ev) => {
@@ -228,7 +345,7 @@ export default function WebinarViewer({
     } catch (e) {
       console.error("[viewer poll]", e);
     }
-  }, [signalUrl, identity, postSignal, isFA]);
+  }, [signalUrl, identity, postSignal, isFA, hlsUrl, eventStatus, iceServers]);
 
   /* ── lifecycle (start polling when in room) ──────────────────── */
 
@@ -284,7 +401,9 @@ export default function WebinarViewer({
         durationMin={durationMin}
         capacity={capacity}
         registeredCount={registeredCount}
-        status={eventStatus}
+        chatEnabled={chatEnabled}
+        requiresAccount={requiresAccount}
+        status={activeEventStatus}
         prefillName={prefillName}
         prefillEmail={prefillEmail}
         onJoin={handleJoin}
@@ -387,6 +506,8 @@ export default function WebinarViewer({
             ref={videoRef}
             autoPlay
             playsInline
+            controls={Boolean(hlsUrl)}
+            poster={image || undefined}
             muted={muted}
             className={cn(
               "absolute inset-0 w-full h-full object-contain transition-opacity",

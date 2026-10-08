@@ -16,6 +16,8 @@ import { VideoGrid, type AcademyVideoEntry } from "@/components/academy/VideoGri
 import { academyOverview } from "@/lib/data/academy";
 import { priceLabel } from "@/lib/utils";
 import { getAllReservations } from "@/lib/data/reservations";
+import { getSession } from "@/lib/auth";
+import { hasGrantedReservation, isFreePrice } from "@/lib/academy-live";
 import { enrichEducation, enrichPattern, enrichProduct, getSite } from "@/lib/data/queries";
 import { dictionaries } from "@/lib/i18n/dictionary";
 import { LOCALES, type Locale } from "@/lib/i18n/types";
@@ -64,13 +66,21 @@ export default async function EducationDetail({ params }: Props) {
   if (!raw) notFound();
   const d = dictionaries[locale];
   const e = enrichEducation(site, raw);
-  const reservations = await getAllReservations();
+  const [reservations, session] = await Promise.all([getAllReservations(), getSession()]);
   const stats = academyOverview(site, reservations).bySlug[e.slug];
-  const courseVideos: AcademyVideoEntry[] = (e.videoFiles ?? []).map((video) => ({
-    video,
-    courseSlug: e.slug,
-    courseTitle: e.title,
-  }));
+  const courseHasAccess = e.type !== "course"
+    || isFreePrice(e.price)
+    || hasGrantedReservation(reservations, e.slug, session);
+  const courseVideos: AcademyVideoEntry[] = (e.videoFiles ?? []).map((video) => {
+    const linkedLesson = e.lessonList?.find((lesson) => lesson.id === video.lessonId);
+    return {
+      video,
+      courseSlug: e.slug,
+      courseTitle: e.title,
+      lessonTitle: linkedLesson?.title,
+      canPlay: video.free === true || linkedLesson?.free === true || courseHasAccess,
+    };
+  });
   const eventHost = e.liveEvent?.hostNameCustom && e.liveEvent.hostName
     ? t(e.liveEvent.hostName, locale)
     : null;
@@ -203,32 +213,34 @@ export default async function EducationDetail({ params }: Props) {
             <div className="rounded-xl border border-border p-5 lg:sticky lg:top-[calc(var(--header-h-compact)+1.5rem)] space-y-5">
               {/* Price / enroll CTA */}
               {e.price && (
-                <div className="flex items-center justify-between gap-4 rounded-lg bg-background-secondary px-4 py-3">
+                <div className="rounded-lg bg-background-secondary px-4 py-3">
                   <span className="text-h4 font-semibold tabular text-foreground">
                     {formatPrice(e.price, locale)}
                   </span>
-                  {e.liveEvent?.isOnline && (e.type === "workshop" || e.type === "webinar") && (
-                    <Link
-                      href={href(locale, `/academy/${e.slug}/live`)}
-                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground hover:border-accent hover:text-accent transition-colors"
-                    >
-                      {locale === "fa" ? "صفحه ورود به رویداد" : "Event access page"}
-                    </Link>
-                  )}
                 </div>
+              )}
+              {e.liveEvent?.isOnline && (e.type === "workshop" || e.type === "webinar") && (
+                <Link
+                  href={href(locale, `/academy/${e.slug}/live`)}
+                  className="inline-flex w-full items-center justify-center rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground hover:border-accent hover:text-accent transition-colors"
+                >
+                  {locale === "fa" ? "صفحه ورود به رویداد" : "Event access page"}
+                </Link>
               )}
 
               {/* Real registration — stored in the academy panel */}
-              <EnrollForm
-                item={{
-                  slug: e.slug,
-                  title: e.title,
-                  type: e.type,
-                  price: e.price,
-                  paymentLabel: priceLabel(e.price, locale) ?? undefined,
-                }}
-                compact
-              />
+              <div id="enroll">
+                <EnrollForm
+                  item={{
+                    slug: e.slug,
+                    title: e.title,
+                    type: e.type,
+                    price: e.price,
+                    paymentLabel: priceLabel(e.price, locale) ?? undefined,
+                  }}
+                  compact
+                />
+              </div>
 
               {stats?.capacity ? (
                 <p className="text-caption text-foreground-secondary tabular">
@@ -245,6 +257,8 @@ export default async function EducationDetail({ params }: Props) {
                   lessons={e.lessonList!}
                   totalMin={e.durationMin}
                   locale={locale}
+                  canAccess={courseHasAccess}
+                  videos={courseVideos.map((entry) => ({ id: entry.video.id, lessonId: entry.video.lessonId, canPlay: entry.canPlay === true }))}
                   dict={{ progress: d.common.progress, lessons: d.common.lessons, minutes: d.common.minutes, hours: d.common.hours, free: locale === "fa" ? "رایگان" : "Free" }}
                 />
               ) : (
@@ -295,18 +309,26 @@ export default async function EducationDetail({ params }: Props) {
         </div>
       </section>
 
-      {courseVideos.length > 0 && (
-        <section className="container-x pt-4">
-          <SectionHeader
-            eyebrow={d.nav.education}
-            title={locale === "fa" ? "ویدیوهای این دوره" : "This course's videos"}
-            description={
-              locale === "fa"
-                ? "ویدیوهایی که در پنل آکادمی برای این دوره آپلود شده‌اند."
-                : "Videos uploaded for this course in the academy panel."
-            }
-          />
-          <VideoGrid entries={courseVideos} poster={e.image} />
+      {e.type === "course" && (
+        <section id="course-videos" className="container-x pt-4">
+          {courseVideos.length > 0 ? (
+            <>
+              <SectionHeader
+                eyebrow={d.nav.education}
+                title={locale === "fa" ? "درس‌های ویدیویی دوره" : "Course video lessons"}
+                description={locale === "fa"
+                  ? "ویدیوهای این دوره با کنترل دسترسی؛ درس‌های قفل‌شده پس از ثبت‌نام و تأیید پرداخت باز می‌شوند."
+                  : "Access-controlled course videos. Locked lessons open after enrolment and payment approval."}
+              />
+              <VideoGrid entries={courseVideos} poster={e.image} />
+            </>
+          ) : (
+            <div className="rounded-xl border border-dashed border-border bg-background-secondary px-5 py-6 text-sm text-foreground-secondary">
+              {locale === "fa"
+                ? "ویدئوی درسی هنوز برای این دوره بارگذاری نشده است. فهرست درس‌ها فقط برنامه درسی را نشان می‌دهد؛ پخش پس از بارگذاری فایل واقعی فعال می‌شود."
+                : "No lesson video has been uploaded for this course yet. The lesson list is a curriculum outline; playback becomes available after a real video is uploaded."}
+            </div>
+          )}
         </section>
       )}
 

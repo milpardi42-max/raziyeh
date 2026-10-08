@@ -30,7 +30,7 @@ export function ReservationsManager() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const changeStatus = async (id: string, status: ReservationStatus) => {
+  const updateReservation = async (id: string, payload: { status?: ReservationStatus; accessGranted?: boolean }) => {
     setBusyId(id);
     setActionError("");
     try {
@@ -38,17 +38,19 @@ export function ReservationsManager() {
         method: "PATCH",
         credentials: "include",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, status }),
+        body: JSON.stringify({ id, ...payload }),
       });
       const result = await response.json() as { reservation?: AcademyReservation; error?: string };
-      if (!response.ok || !result.reservation) throw new Error(result.error ?? "ذخیره وضعیت رزرو ناموفق بود.");
+      if (!response.ok || !result.reservation) throw new Error(result.error ?? "ذخیره تغییر رزرو ناموفق بود.");
       setReservations((current) => current.map((reservation) => reservation.id === id ? result.reservation! : reservation));
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "ذخیره وضعیت رزرو ناموفق بود.");
+      setActionError(err instanceof Error ? err.message : "ذخیره تغییر رزرو ناموفق بود.");
     } finally {
       setBusyId("");
     }
   };
+  const changeStatus = (id: string, status: ReservationStatus) => updateReservation(id, { status });
+  const changeAccess = (id: string, accessGranted: boolean) => updateReservation(id, { accessGranted });
 
   const active = reservations.filter((reservation) => reservation.status === "reserved");
   const visible = reservations.filter((reservation) => reservation.status === statusFilter);
@@ -109,6 +111,18 @@ export function ReservationsManager() {
                     <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
                       <span dir="ltr">{new Date(reservation.createdAt).toLocaleString("fa-IR")}</span>
                       {reservation.status === "reserved" && <span className="rounded-full bg-emerald-50 px-2 py-1 font-medium text-emerald-700">رزرو فعال</span>}
+                      {reservation.paymentRequired ? (
+                        <>
+                          <span className={`rounded-full px-2 py-1 font-medium ${reservation.accessGranted ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
+                            {reservation.accessGranted ? "دسترسی فعال" : "در انتظار تأیید پرداخت"}
+                          </span>
+                          {reservation.status !== "cancelled" && (
+                            <button type="button" disabled={busyId === reservation.id} onClick={() => void changeAccess(reservation.id, !reservation.accessGranted)} className={`rounded-md border px-2.5 py-1.5 font-medium disabled:opacity-50 ${reservation.accessGranted ? "border-red-200 bg-white text-red-600" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                              {reservation.accessGranted ? "لغو دسترسی" : "تأیید پرداخت و فعال‌سازی"}
+                            </button>
+                          )}
+                        </>
+                      ) : <span className="rounded-full bg-emerald-50 px-2 py-1 font-medium text-emerald-700">رایگان / دسترسی باز</span>}
                       {reservation.status === "reserved" && <>
                         <button type="button" disabled={busyId === reservation.id} onClick={() => void changeStatus(reservation.id, "attended")} className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 font-medium text-emerald-700 disabled:opacity-50">ثبت حضور</button>
                         <button type="button" disabled={busyId === reservation.id} onClick={() => { if (confirm("رزرو این شرکت‌کننده لغو شود؟")) void changeStatus(reservation.id, "cancelled"); }} className="rounded-md border border-red-200 bg-white px-2.5 py-1.5 font-medium text-red-600 disabled:opacity-50">لغو رزرو</button>

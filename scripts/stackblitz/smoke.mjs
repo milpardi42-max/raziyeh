@@ -1,6 +1,29 @@
 const origin = process.env.SMOKE_ORIGIN ?? "http://localhost:3000";
-const routes = [["/fa", 200], ["/en", 200], ["/fa/portfolio", 200], ["/fa/artists", 200], ["/api/auth/me", 200], ["/api/admin/stats", 401]];
 let failed = false;
+let hasAdminAccess = false;
+
+try {
+  const response = await fetch(new URL("/api/admin/session", origin), { signal: AbortSignal.timeout(180_000) });
+  const body = await response.json();
+  hasAdminAccess = response.ok && body.user?.role === "admin";
+  const ok = response.ok && Object.hasOwn(body, "user");
+  console.log(`${ok ? "PASS" : "FAIL"} /api/admin/session: HTTP ${response.status}`);
+  if (!ok) failed = true;
+} catch (error) {
+  console.error(`FAIL /api/admin/session: ${error.message}`);
+  failed = true;
+}
+
+const routes = [
+  ["/fa", 200],
+  ["/en", 200],
+  ["/fa/portfolio", 200],
+  ["/fa/artists", 200],
+  ["/admin", 200],
+  ["/api/auth/me", 200],
+  ["/api/admin/stats", hasAdminAccess ? 200 : 401],
+];
+
 for (const [path, expected] of routes) {
   try {
     const response = await fetch(new URL(path, origin), { signal: AbortSignal.timeout(180_000) });
@@ -14,6 +37,6 @@ for (const [path, expected] of routes) {
   }
 }
 if (failed) {
-  console.error("Smoke test failed. Share these results and the Next terminal stack trace; do not bypass request-store/authentication checks.");
+  console.error("Smoke test failed. Inspect these results and the Next terminal log; do not mask runtime or authorization errors.");
   process.exitCode = 1;
-} else console.log("HTTP checks passed in this runtime. Browser hydration/playback and native upload processing are separate checks.");
+} else console.log("HTTP checks passed. Browser hydration/playback and native upload processing are separate checks.");

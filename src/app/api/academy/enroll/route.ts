@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withNoStore } from "@/lib/http";
 import { getSession } from "@/lib/auth";
+import { effectiveLiveStatus, isFreePrice } from "@/lib/academy-live";
 import { getContent } from "@/lib/data/store";
 import { createReservation } from "@/lib/data/reservations";
 import { clientIp, recordAttempt, retryAfterSeconds, tooManyAttempts } from "@/lib/rate-limit";
@@ -26,6 +27,7 @@ export async function POST(req: Request) {
     if (wait > 0) res.headers.set("Retry-After", String(wait));
     return res;
   }
+  recordAttempt(key);
 
   const body = (await req.json().catch(() => null)) as
     | { slug?: string; name?: string; email?: string }
@@ -46,7 +48,7 @@ export async function POST(req: Request) {
   }
 
   const session = await getSession();
-  const status = (item.liveEvent as { status?: string } | undefined)?.status;
+  const status = effectiveLiveStatus(item.liveEvent);
   if (status === "ended" || status === "cancelled") {
     return NextResponse.json({ ok: false, error: "event_closed" }, withNoStore({ status: 409 }));
   }
@@ -61,8 +63,10 @@ export async function POST(req: Request) {
       userId: session?.id,
       name,
       email,
+      // Free content is immediately available. Paid access is manually granted after payment verification.
+      accessGranted: isFreePrice(item.price),
+      paymentRequired: !isFreePrice(item.price),
     });
-    recordAttempt(key);
 
     return NextResponse.json(
       {
@@ -74,8 +78,9 @@ export async function POST(req: Request) {
           type: item.type,
           startsAt: reservation.startsAt,
           status: reservation.status,
-          /* A priced course is a paid seat: the academy confirms payment over e-mail. */
-          paymentDue: Boolean(item.price && (item.price.fa > 0 || item.price.en > 0)),
+          accessGranted: reservation.accessGranted === true,
+          /* A priced course is a paid seat: access stays closed until an admin verifies payment. */
+          paymentDue: !isFreePrice(item.price) && reservation.accessGranted !== true,
         },
       },
       withNoStore(),

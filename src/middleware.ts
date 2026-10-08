@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { ADMIN_LOGIN_DISABLED } from "@/lib/admin-access";
 import { DEFAULT_LOCALE, LOCALES } from "@/lib/i18n/types";
 import { readSessionToken, SESSION_COOKIE } from "@/lib/session";
 
@@ -16,6 +17,16 @@ export async function middleware(req: NextRequest) {
   const adminMatch = pathname.match(/^\/admin\/([^/]+)(\/.*)?$/);
   if (adminMatch) {
     const rest = adminMatch[2] ?? "";
+
+    // TEMPORARY: the owner requested direct public access to the admin panel.
+    if (ADMIN_LOGIN_DISABLED) {
+      if (rest === "/login" || rest === "/login/") {
+        const panelUrl = req.nextUrl.clone();
+        panelUrl.pathname = `/admin/${adminMatch[1]}`;
+        return NextResponse.redirect(panelUrl);
+      }
+      return NextResponse.next();
+    }
 
     // صفحه لاگین ادمین نیازی به بررسی نشست ندارد
     if (rest === "/login" || rest === "/login/") return NextResponse.next();

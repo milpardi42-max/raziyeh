@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
   BarChart2,
   BookOpen,
@@ -15,7 +15,6 @@ import {
   Eye,
   Film,
   GraduationCap,
-  Globe,
   Link as LinkIcon,
   MapPin,
   Mic2,
@@ -28,7 +27,6 @@ import {
   TrendingUp,
   Upload,
   Users,
-  Video,
   Wifi,
   WifiOff,
   X,
@@ -36,10 +34,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { cn, href, t } from "@/lib/utils";
+import { effectiveLiveStatus, isFreePrice, safeExternalHttpsUrl } from "@/lib/academy-live";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select, Textarea } from "@/components/ui/Input";
 import { AcademyAnalytics } from "@/components/admin/AcademyAnalytics";
 import type {
+  AcademyReservation,
   Artist,
   Category,
   CourseVideoFile,
@@ -47,6 +47,7 @@ import type {
   Difficulty,
   EducationItem,
   EducationType,
+  LessonItem,
   LiveEventConfig,
   LiveEventStatus,
   SiteContent,
@@ -71,6 +72,10 @@ const LIVE_STATUS_META: Record<LiveEventStatus, { label: string; color: string; 
   cancelled: { label: "لغوشده", color: "bg-red-50 text-red-400 border-red-100", dot: "bg-red-300" },
 };
 
+function eventStatusOf(live: LiveEventConfig, now = Date.now()): LiveEventStatus {
+  return effectiveLiveStatus(live, now) ?? live.status;
+}
+
 const DRAFT_STATUS_META: Record<DraftStatus, { label: string; color: string }> = {
   draft: { label: "پیش‌نویس", color: "bg-zinc-100 text-zinc-600" },
   pending_review: { label: "در انتظار تأیید", color: "bg-amber-50 text-amber-700 border border-amber-200" },
@@ -86,8 +91,8 @@ function makeId() {
   return `edu-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-function makeVideoId() {
-  return `vid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+function makeLessonId() {
+  return `lesson-${crypto.randomUUID()}`;
 }
 
 function makeSlug(title: string) {
@@ -175,15 +180,52 @@ function SectionBox({ title, icon, color = "blue", children }: {
   );
 }
 
+function LessonListEditor({ lessons, onChange }: { lessons: LessonItem[]; onChange: (lessons: LessonItem[]) => void }) {
+  const update = (id: string, patch: Partial<LessonItem>) =>
+    onChange(lessons.map((lesson) => lesson.id === id ? { ...lesson, ...patch } : lesson));
+
+  return (
+    <SectionBox title="فهرست درس‌های دوره" icon={<BookOpen className="h-4 w-4" />} color="blue">
+      <p className="text-xs leading-6 text-muted">برای هر درس عنوان فارسی و انگلیسی، مدت و امکان پیش‌نمایش را ثبت کنید؛ فایل هر درس را در بخش ویدیوها به آن متصل کنید.</p>
+      {lessons.length === 0 && <p className="rounded-lg border border-dashed border-blue-200 bg-white/60 px-3 py-4 text-center text-xs text-muted">هنوز درسی تعریف نشده است. شمار درس‌ها از فهرست زیر محاسبه می‌شود.</p>}
+      <div className="space-y-3">
+        {lessons.map((lesson, index) => (
+          <div key={lesson.id} className="rounded-lg border border-blue-100 bg-white/80 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <span className="text-xs font-semibold text-blue-800">درس {index + 1}</span>
+              <button type="button" onClick={() => onChange(lessons.filter((entry) => entry.id !== lesson.id))} className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /> حذف درس</button>
+            </div>
+            <LocalizedField label="عنوان درس" value={lesson.title} onChange={(title) => update(lesson.id, { title })} required />
+            <div className="flex flex-wrap items-center gap-4">
+              <Field label="مدت درس (دقیقه)">
+                <Input type="number" min={0} value={lesson.durationMin ?? 0} onChange={(e) => update(lesson.id, { durationMin: Math.max(0, Number(e.target.value) || 0) })} />
+              </Field>
+              <label className="mt-5 flex cursor-pointer items-center gap-2 text-xs text-foreground-secondary">
+                <input type="checkbox" className="h-4 w-4 accent-accent" checked={!!lesson.free} onChange={(e) => update(lesson.id, { free: e.target.checked })} />
+                درس پیش‌نمایش رایگان
+              </label>
+            </div>
+          </div>
+        ))}
+      </div>
+      <Button type="button" variant="outline" size="sm" onClick={() => onChange([...lessons, { id: makeLessonId(), title: { fa: `درس ${lessons.length + 1}`, en: `Lesson ${lessons.length + 1}` }, durationMin: 0, free: false }])}>
+        <Plus className="h-3.5 w-3.5 ml-1.5" /> افزودن درس
+      </Button>
+    </SectionBox>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════
    VIDEO UPLOAD PANEL (for Courses)
    ═══════════════════════════════════════════════════════════════ */
 
 function VideoUploadPanel({
   videos,
+  lessons,
   onChange,
 }: {
   videos: CourseVideoFile[];
+  lessons: LessonItem[];
   onChange: (v: CourseVideoFile[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -197,39 +239,84 @@ function VideoUploadPanel({
     setUploadError(null);
 
     const newVideos: CourseVideoFile[] = [...videos];
-
     for (const file of Array.from(files)) {
       try {
-        const fd = new FormData();
-        fd.append("file", file);
-        fd.append("fileType", "video");
-        const res = await fetch("/api/admin/academy/upload-video", {
+        if (file.size > 500 * 1024 * 1024) throw new Error("file_too_large");
+        if (!["video/mp4", "video/webm"].includes(file.type)) throw new Error("unsupported_video_type");
+
+        const sessionResponse = await fetch("/api/admin/academy/upload-video/session", {
           method: "POST",
           credentials: "include",
-          body: fd,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mime: file.type, sizeBytes: file.size }),
         });
-        const json = (await res.json()) as {
-          ok: boolean; url?: string; sizeBytes?: number; durationSec?: number; error?: string;
+        const session = await sessionResponse.json() as {
+          ok: boolean; mode?: "direct" | "proxy"; id?: string; uploadUrl?: string; mime?: string; error?: string;
         };
-        if (!json.ok || !json.url) {
-          setUploadError(`خطا در آپلود "${file.name}": ${json.error ?? "ناشناس"}`);
-          continue;
+        if (!sessionResponse.ok || !session.ok || !session.mode) {
+          throw new Error(session.error ?? "upload_setup_failed");
         }
+
+        let stored: { id: string; url: string; storageKey: string; mime: string; sizeBytes: number };
+        if (session.mode === "direct") {
+          if (!session.id || !session.uploadUrl) throw new Error("upload_setup_failed");
+          const uploadResponse = await fetch(session.uploadUrl, {
+            method: "PUT",
+            credentials: "omit",
+            headers: { "Content-Type": file.type },
+            body: file,
+          });
+          if (!uploadResponse.ok) throw new Error("object_store_upload_failed");
+          const completeResponse = await fetch("/api/admin/academy/upload-video/complete", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: session.id, mime: file.type, sizeBytes: file.size }),
+          });
+          const complete = await completeResponse.json() as { ok: boolean; video?: typeof stored; error?: string };
+          if (!completeResponse.ok || !complete.ok || !complete.video) throw new Error(complete.error ?? "upload_verification_failed");
+          stored = complete.video;
+        } else {
+          const form = new FormData();
+          form.append("file", file);
+          const uploadResponse = await fetch("/api/admin/academy/upload-video", {
+            method: "POST",
+            credentials: "include",
+            body: form,
+          });
+          const result = await uploadResponse.json() as { ok: boolean } & Partial<typeof stored> & { error?: string };
+          if (!uploadResponse.ok || !result.ok || !result.id || !result.url || !result.storageKey || !result.mime || !result.sizeBytes) {
+            throw new Error(result.error ?? "upload_failed");
+          }
+          stored = result as typeof stored;
+        }
+
+        const baseName = file.name.replace(/\.[^.]+$/, "");
+        const unlinkedLesson = lessons.find((lesson) => !newVideos.some((video) => video.lessonId === lesson.id));
         newVideos.push({
-          id: makeVideoId(),
-          title: { fa: file.name.replace(/\.[^.]+$/, ""), en: file.name.replace(/\.[^.]+$/, "") },
-          url: json.url,
-          sizeBytes: json.sizeBytes ?? file.size,
-          durationSec: json.durationSec,
+          ...stored,
+          title: { fa: baseName, en: baseName },
+          ...(unlinkedLesson ? { lessonId: unlinkedLesson.id } : {}),
           free: false,
           uploadedAt: new Date().toISOString(),
         });
-      } catch (e) {
-        setUploadError(`خطا در آپلود "${file.name}"`);
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "upload_failed";
+        const message = code === "file_too_large"
+          ? "حجم هر ویدیو حداکثر ۵۰۰ مگابایت است."
+          : code === "content_length_required"
+            ? "سرور پراکسی اندازه درخواست آپلود را اعلام نکرد؛ اتصال یا محدودیت پراکسی را بررسی کنید."
+            : code === "unsupported_video_type"
+            ? "فقط فایل MP4 یا WebM پشتیبانی می‌شود."
+            : code === "object_store_upload_failed"
+              ? "آپلود فضای ذخیره‌سازی کامل نشد؛ تنظیم CORS فضای S3-compatible را بررسی کنید."
+              : `خطا در آپلود «${file.name}» (${code}).`;
+        setUploadError(message);
       }
     }
 
     onChange(newVideos);
+    if (inputRef.current) inputRef.current.value = "";
     setUploading(false);
   };
 
@@ -250,6 +337,10 @@ function VideoUploadPanel({
 
   return (
     <SectionBox title="فیلم‌های آموزشی دوره" icon={<Film className="h-4 w-4" />} color="purple">
+      <p className="rounded-lg border border-purple-200 bg-white/70 px-3 py-2 text-xs leading-6 text-purple-900">
+        ویدیوها خارج از پوشه عمومی ذخیره می‌شوند و به‌صورت پیش‌فرض خصوصی‌اند. ویدیوهای دوره‌های پولی فقط پس از تأیید دسترسی پخش می‌شوند؛ برای پیش‌نمایش رایگان، گزینه «رایگان» را فعال کنید.
+        {lessons.length === 0 && " ابتدا در بخش فهرست درس‌ها، درس‌ها را تعریف کنید؛ اتصال فایل به درس از فهرست هر ویدیو انجام می‌شود."}
+      </p>
       {/* Drop zone */}
       <div
         className={cn(
@@ -364,6 +455,17 @@ function VideoUploadPanel({
                 </div>
               </div>
 
+              {/* Link the video to its place in the course curriculum. */}
+              <select
+                aria-label="درس مرتبط با ویدیو"
+                value={v.lessonId ?? ""}
+                onChange={(e) => updateVideo(v.id, { lessonId: e.target.value || undefined })}
+                className="max-w-36 rounded-md border border-border bg-white px-2 py-1 text-[10px] text-foreground"
+              >
+                <option value="">بدون اتصال به درس</option>
+                {lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.title.fa || lesson.title.en}</option>)}
+              </select>
+
               {/* Free toggle */}
               <label className="flex items-center gap-1.5 text-[10px] text-muted cursor-pointer shrink-0">
                 <input
@@ -405,15 +507,16 @@ function VideoUploadPanel({
    ═══════════════════════════════════════════════════════════════ */
 
 function WorkshopEventSection({
-  live, onChange, slug,
+  live, onChange, slug, registeredCount, saved,
 }: {
-  live: LiveEventConfig; onChange: (v: LiveEventConfig) => void; slug: string;
+  live: LiveEventConfig; onChange: (v: LiveEventConfig) => void; slug: string; registeredCount: number; saved: boolean;
 }) {
   const set = <K extends keyof LiveEventConfig>(k: K, v: LiveEventConfig[K]) =>
     onChange({ ...live, [k]: v });
 
   const pct = live.capacity > 0
-    ? Math.min(100, Math.round((live.registeredCount / live.capacity) * 100)) : 0;
+    ? Math.min(100, Math.round((registeredCount / live.capacity) * 100)) : 0;
+  const safeMeetLink = safeExternalHttpsUrl(live.meetLink)?.href;
   const stream = live.webinarStream ?? {
     source: "camera" as const,
     chatEnabled: true,
@@ -421,6 +524,7 @@ function WorkshopEventSection({
   };
   const setStream = <K extends keyof WebinarStreamConfig>(k: K, v: WebinarStreamConfig[K]) =>
     set("webinarStream", { ...stream, [k]: v });
+  const displayStatus = eventStatusOf(live);
 
   return (
     <div className="space-y-4">
@@ -428,18 +532,18 @@ function WorkshopEventSection({
       {/* ── وضعیت رویداد — کارت بالای صفحه ── */}
       <div className={cn(
         "rounded-xl border-2 p-4 transition-all",
-        live.status === "live"
+        displayStatus === "live"
           ? "border-red-400 bg-red-50"
-          : live.status === "ended"
+          : displayStatus === "ended"
           ? "border-zinc-300 bg-zinc-50"
-          : live.status === "cancelled"
+          : displayStatus === "cancelled"
           ? "border-red-200 bg-red-50/50"
           : "border-emerald-300 bg-emerald-50"
       )}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", LIVE_STATUS_META[live.status].dot)} />
-            <span className="font-bold text-sm">{LIVE_STATUS_META[live.status].label}</span>
+            <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", LIVE_STATUS_META[displayStatus].dot)} />
+            <span className="font-bold text-sm">{LIVE_STATUS_META[displayStatus].label}</span>
           </div>
           <Select
             value={live.status}
@@ -451,7 +555,12 @@ function WorkshopEventSection({
             ))}
           </Select>
         </div>
-        {live.status === "live" && (
+        {displayStatus !== live.status && (
+          <p className="mt-2 text-xs text-foreground-secondary">
+            این وضعیت بر اساس زمان شروع و مدت رویداد محاسبه شده؛ وضعیت ذخیره‌شدهٔ مدیریتی تغییر نکرده است.
+          </p>
+        )}
+        {displayStatus === "live" && (
           <p className="mt-2 text-xs text-red-700 font-medium">
             🟢 ورکشاپ الان در حال برگزاری است
           </p>
@@ -538,54 +647,52 @@ function WorkshopEventSection({
             {stream.source === "camera" && (
               <div className={cn(
                 "rounded-lg border p-3 text-sm space-y-2",
-                live.status === "live"
+                displayStatus === "live"
                   ? "border-red-300 bg-red-50 text-red-900"
                   : "border-emerald-200 bg-emerald-50 text-emerald-800"
               )}>
                 <p className="font-semibold flex items-center gap-2 text-xs">
                   <Camera className="h-3.5 w-3.5" />
                   پخش زنده از دوربین مرورگر
-                  {live.status === "live" && (
+                  {displayStatus === "live" && (
                     <span className="mr-auto flex items-center gap-1 text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full">
                       <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                       در حال پخش
                     </span>
                   )}
                 </p>
-                {live.status !== "live" ? (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
-                    <span className="mt-0.5 shrink-0">⚠️</span>
-                    <span>
-                      برای فعال شدن دکمه پخش، وضعیت را
-                      <strong className="mx-1">🔴 در حال پخش</strong>
-                      کنید و ذخیره کنید.
-                    </span>
-                  </div>
-                ) : !slug ? (
-                  <p className="text-xs text-amber-700">ابتدا ورکشاپ را ذخیره کنید.</p>
+                {!saved || !slug ? (
+                  <p className="text-xs text-amber-700">ابتدا ورکشاپ را ذخیره کنید؛ سپس می‌توانید دوربین را روشن کنید.</p>
+                ) : displayStatus === "ended" || displayStatus === "cancelled" ? (
+                  <p className="text-xs text-zinc-600">این رویداد پایان‌یافته یا لغوشده است و پخش آن قابل شروع نیست.</p>
                 ) : (
-                  <div className="flex flex-wrap gap-2">
-                    <Link
-                      href={`/fa/academy/${slug}/broadcast`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white hover:bg-red-700 shadow-sm"
-                    >
-                      <Camera className="h-3.5 w-3.5 animate-pulse" />
-                      🔴 شروع پخش زنده
-                    </Link>
-                    <Link
-                      href={`/fa/academy/${slug}/live`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 rounded-lg bg-zinc-700 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800"
-                    >
-                      <Eye className="h-3.5 w-3.5" />
-                      صفحه شرکت‌کنندگان
-                    </Link>
+                  <div className="space-y-2">
+                    <p className="text-xs leading-6 text-emerald-800">
+                      برای شروع، صفحه کنترل را باز کنید و «روشن کردن دوربین و شروع پخش» را بزنید؛ لازم نیست وضعیت را دستی زنده کنید.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Link
+                        href={`/fa/academy/${slug}/broadcast`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white hover:bg-red-700 shadow-sm"
+                      >
+                        <Camera className="h-3.5 w-3.5" />
+                        باز کردن کنترل دوربین
+                      </Link>
+                      <Link
+                        href={`/fa/academy/${slug}/live`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 rounded-lg bg-zinc-700 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        صفحه شرکت‌کنندگان
+                      </Link>
+                    </div>
                   </div>
                 )}
-                {slug && <JoinLinkCopier slug={slug} />}
+                {saved && slug && <JoinLinkCopier slug={slug} />}
               </div>
             )}
 
@@ -604,8 +711,8 @@ function WorkshopEventSection({
                         placeholder="https://zoom.us/j/…"
                         onChange={(e) => set("meetLink", e.target.value)}
                         className="flex-1" />
-                      {live.meetLink && (
-                        <a href={live.meetLink} target="_blank" rel="noopener noreferrer"
+                      {safeMeetLink && (
+                        <a href={safeMeetLink} target="_blank" rel="noopener noreferrer"
                           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-white text-muted hover:text-foreground">
                           <ExternalLink className="h-3.5 w-3.5" />
                         </a>
@@ -646,16 +753,18 @@ function WorkshopEventSection({
             <Input type="number" min={0} value={live.capacity}
               onChange={(e) => set("capacity", Number(e.target.value))} />
           </Field>
-          <Field label="ثبت‌نام‌کنندگان">
-            <Input type="number" min={0} value={live.registeredCount}
-              onChange={(e) => set("registeredCount", Number(e.target.value))} />
-          </Field>
+          <div className="flex flex-col justify-end gap-1">
+            <span className="text-xs font-medium text-muted">ثبت‌نام فعال (از رزروهای واقعی)</span>
+            <div className="flex h-9 items-center rounded-md border border-border bg-background-secondary px-3 text-sm font-semibold text-foreground tabular-nums">
+              {registeredCount.toLocaleString("fa-IR")}
+            </div>
+          </div>
         </div>
         {live.capacity > 0 && (
           <div className="space-y-1">
             <div className="flex justify-between text-xs text-muted">
               <span>پر شدن ظرفیت</span>
-              <span>{live.registeredCount}/{live.capacity} ({pct}%)</span>
+              <span>{registeredCount}/{live.capacity} ({pct}%)</span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full border border-border bg-white">
               <div className={cn("h-full rounded-full transition-all",
@@ -666,34 +775,10 @@ function WorkshopEventSection({
         )}
       </SectionBox>
 
-      {/* ── ضبط و گواهینامه ── */}
-      <SectionBox title="ضبط جلسه و گواهینامه" icon={<Download className="h-4 w-4" />} color="emerald">
-        <Field label="آدرس فایل ضبط‌شده (URL)">
-          <Input dir="ltr" value={live.recordingUrl ?? ""}
-            placeholder="https://… یا /videos/academy/…"
-            onChange={(e) => set("recordingUrl", e.target.value || undefined)} />
-        </Field>
-        <div className="flex flex-wrap gap-4 text-sm">
-          <label className="flex cursor-pointer items-center gap-2">
-            <input type="checkbox" className="h-4 w-4 accent-accent"
-              checked={!!live.recordingDownloadable}
-              onChange={(e) => set("recordingDownloadable", e.target.checked)} />
-            <Download className="h-3.5 w-3.5 text-blue-500" />
-            قابل دانلود توسط ثبت‌نام‌کنندگان
-          </label>
-          <label className="flex cursor-pointer items-center gap-2">
-            <input type="checkbox" className="h-4 w-4 accent-accent"
-              checked={!!live.recordingPublic}
-              onChange={(e) => set("recordingPublic", e.target.checked)} />
-            <Globe className="h-3.5 w-3.5 text-emerald-500" />
-            نمایش عمومی ضبط
-          </label>
-          <label className="flex cursor-pointer items-center gap-2">
-            <input type="checkbox" className="h-4 w-4 accent-accent"
-              checked={!!live.certificateEnabled}
-              onChange={(e) => set("certificateEnabled", e.target.checked)} />
-            صدور گواهینامه حضور
-          </label>
+      {/* Recording/certificate options stay explicit until their delivery flows exist. */}
+      <SectionBox title="ضبط و گواهینامه" icon={<Download className="h-4 w-4" />} color="emerald">
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-6 text-amber-900">
+          پخش زنده در حال حاضر ضبط یا ذخیره نمی‌شود و صدور گواهینامه خودکار فعال نیست. پس از پیاده‌سازی آپلود خصوصی و فرایند صدور، این امکانات از همین‌جا قابل مدیریت خواهند بود.
         </div>
         <label className="flex cursor-pointer items-center gap-2 text-sm pt-1">
           <input type="checkbox" className="h-4 w-4 accent-accent"
@@ -762,9 +847,9 @@ function JoinLinkCopier({ slug }: { slug: string }) {
    ═══════════════════════════════════════════════════════════════ */
 
 function WebinarEventSection({
-  live, onChange, slug,
+  live, onChange, slug, registeredCount, saved,
 }: {
-  live: LiveEventConfig; onChange: (v: LiveEventConfig) => void; slug: string;
+  live: LiveEventConfig; onChange: (v: LiveEventConfig) => void; slug: string; registeredCount: number; saved: boolean;
 }) {
   const set = <K extends keyof LiveEventConfig>(k: K, v: LiveEventConfig[K]) =>
     onChange({ ...live, [k]: v });
@@ -772,9 +857,10 @@ function WebinarEventSection({
   const stream = live.webinarStream ?? { source: "camera" as const };
   const setStream = <K extends keyof WebinarStreamConfig>(k: K, v: WebinarStreamConfig[K]) =>
     set("webinarStream", { ...stream, [k]: v });
+  const displayStatus = eventStatusOf(live);
 
   const pct = live.capacity > 0
-    ? Math.min(100, Math.round((live.registeredCount / live.capacity) * 100)) : 0;
+    ? Math.min(100, Math.round((registeredCount / live.capacity) * 100)) : 0;
 
   return (
     <div className="space-y-4">
@@ -782,19 +868,19 @@ function WebinarEventSection({
       {/* ── وضعیت رویداد — همیشه در بالا و کاملاً مرئی ── */}
       <div className={cn(
         "rounded-xl border-2 p-4 transition-all",
-        live.status === "live"
+        displayStatus === "live"
           ? "border-red-400 bg-red-50"
-          : live.status === "ended"
+          : displayStatus === "ended"
           ? "border-zinc-300 bg-zinc-50"
-          : live.status === "cancelled"
+          : displayStatus === "cancelled"
           ? "border-red-200 bg-red-50/50"
           : "border-amber-300 bg-amber-50"
       )}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", LIVE_STATUS_META[live.status].dot)} />
+            <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", LIVE_STATUS_META[displayStatus].dot)} />
             <span className="font-bold text-sm">
-              {LIVE_STATUS_META[live.status].label}
+              {LIVE_STATUS_META[displayStatus].label}
             </span>
           </div>
           <Select
@@ -807,14 +893,19 @@ function WebinarEventSection({
             ))}
           </Select>
         </div>
-        {live.status === "live" && (
+        {displayStatus !== live.status && (
+          <p className="mt-2 text-xs text-foreground-secondary">
+            این وضعیت بر اساس زمان شروع و مدت رویداد محاسبه شده؛ وضعیت ذخیره‌شدهٔ مدیریتی تغییر نکرده است.
+          </p>
+        )}
+        {displayStatus === "live" && (
           <p className="mt-2 text-xs text-red-700 font-medium">
             🔴 وبینار الان در حال پخش است — دکمه پخش زنده در پایین همین صفحه فعال است
           </p>
         )}
-        {live.status === "scheduled" && (
+        {displayStatus === "scheduled" && (
           <p className="mt-2 text-xs text-amber-700">
-            برای شروع پخش، وضعیت را به «🔴 در حال پخش» تغییر دهید
+            برای شروع پخش دوربین، از بخش «منبع استریم» پایین‌تر دکمه کنترل دوربین را باز کنید؛ تغییر دستی وضعیت لازم نیست.
           </p>
         )}
       </div>
@@ -839,16 +930,18 @@ function WebinarEventSection({
             <Input type="number" min={0} value={live.capacity}
               onChange={(e) => set("capacity", Number(e.target.value))} />
           </Field>
-          <Field label="ثبت‌نام‌کنندگان">
-            <Input type="number" min={0} value={live.registeredCount}
-              onChange={(e) => set("registeredCount", Number(e.target.value))} />
-          </Field>
+          <div className="flex flex-col justify-end gap-1">
+            <span className="text-xs font-medium text-muted">ثبت‌نام فعال (از رزروهای واقعی)</span>
+            <div className="flex h-9 items-center rounded-md border border-border bg-background-secondary px-3 text-sm font-semibold text-foreground tabular-nums">
+              {registeredCount.toLocaleString("fa-IR")}
+            </div>
+          </div>
         </div>
         {live.capacity > 0 && (
           <div className="space-y-1">
             <div className="flex justify-between text-xs text-muted">
               <span>پر شدن ظرفیت</span>
-              <span>{live.registeredCount}/{live.capacity} ({pct}%)</span>
+              <span>{registeredCount}/{live.capacity} ({pct}%)</span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full border border-border bg-white">
               <div className={cn("h-full rounded-full transition-all",
@@ -872,14 +965,6 @@ function WebinarEventSection({
           />
         )}
 
-        <div className="flex flex-wrap gap-4 text-sm">
-          <label className="flex cursor-pointer items-center gap-2">
-            <input type="checkbox" className="h-4 w-4 accent-accent"
-              checked={!!live.certificateEnabled}
-              onChange={(e) => set("certificateEnabled", e.target.checked)} />
-            صدور گواهینامه حضور
-          </label>
-        </div>
       </SectionBox>
 
       {/* Stream source */}
@@ -909,7 +994,7 @@ function WebinarEventSection({
               )}
             >
               <MonitorPlay className="h-4 w-4" />
-              استریم خارجی (RTMP/HLS)
+              HLS خارجی (سرویس آماده)
             </button>
           </div>
         </div>
@@ -917,14 +1002,14 @@ function WebinarEventSection({
         {stream.source === "camera" && (
           <div className={cn(
             "rounded-lg border p-4 text-sm space-y-3",
-            live.status === "live"
+            displayStatus === "live"
               ? "border-red-300 bg-red-50 text-red-900"
               : "border-rose-200 bg-rose-50 text-rose-800"
           )}>
             <p className="font-semibold flex items-center gap-2">
               <Camera className="h-4 w-4" />
               پخش از دوربین مرورگر
-              {live.status === "live" && (
+              {displayStatus === "live" && (
                 <span className="mr-auto flex items-center gap-1 text-xs font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full">
                   <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                   در حال پخش
@@ -932,22 +1017,20 @@ function WebinarEventSection({
               )}
             </p>
 
-            {live.status !== "live" ? (
+            {!saved || !slug ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 flex items-start gap-2">
                 <span className="mt-0.5 shrink-0">⚠️</span>
-                <span>
-                  برای فعال شدن دکمه پخش زنده، ابتدا وضعیت را روی
-                  <strong className="mx-1">🔴 در حال پخش</strong>
-                  تنظیم کنید و سپس ذخیره کنید.
-                </span>
+                <span>ابتدا وبینار را ذخیره کنید تا صفحه کنترل دوربین ساخته شود.</span>
               </div>
-            ) : !slug ? (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 flex items-start gap-2">
-                <span className="mt-0.5 shrink-0">⚠️</span>
-                <span>ابتدا وبینار را ذخیره کنید تا دکمه پخش فعال شود.</span>
+            ) : displayStatus === "ended" || displayStatus === "cancelled" ? (
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-700">
+                این وبینار پایان‌یافته یا لغوشده است و پخش آن قابل شروع نیست.
               </div>
             ) : (
               <div className="space-y-2">
+                <p className="text-xs leading-6 text-rose-800">
+                  برای شروع، کنترل دوربین را باز کنید و دکمه «روشن کردن دوربین و شروع پخش» را بزنید؛ لازم نیست وضعیت را دستی تغییر دهید.
+                </p>
                 <div className="flex flex-wrap gap-2">
                   <Link
                     href={`/fa/academy/${slug}/broadcast`}
@@ -955,8 +1038,8 @@ function WebinarEventSection({
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-red-700 shadow-sm"
                   >
-                    <Camera className="h-3.5 w-3.5 animate-pulse" />
-                    🔴 شروع پخش زنده از دوربین
+                    <Camera className="h-3.5 w-3.5" />
+                    باز کردن کنترل دوربین
                   </Link>
                   <Link
                     href={`/fa/academy/${slug}/live`}
@@ -977,12 +1060,10 @@ function WebinarEventSection({
 
         {stream.source === "external" && (
           <div className="space-y-3">
-            <Field label="آدرس RTMP Ingest (برای نرم‌افزار پخش شما)">
-              <Input dir="ltr" value={stream.rtmpUrl ?? ""}
-                placeholder="rtmp://live.example.com/live/key"
-                onChange={(e) => setStream("rtmpUrl", e.target.value || undefined)} />
-            </Field>
-            <Field label="آدرس HLS برای بینندگان">
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-6 text-amber-900">
+              سایت فقط HLS آماده را با کنترل دسترسی پروکسی و پخش می‌کند. دریافت RTMP، تبدیل RTMP به HLS و میزبانی استریم در این پروژه پیاده‌سازی نشده؛ باید سرویس بیرونی HLS عمومیِ HTTPS فراهم کند.
+            </p>
+            <Field label="آدرس HLS برای بینندگان (HTTPS)">
               <Input dir="ltr" value={stream.hlsUrl ?? ""}
                 placeholder="https://live.example.com/hls/stream.m3u8"
                 onChange={(e) => setStream("hlsUrl", e.target.value || undefined)} />
@@ -1011,39 +1092,11 @@ function WebinarEventSection({
         </Field>
       </SectionBox>
 
-      {/* Recording + download */}
-      <SectionBox title="ضبط و دانلود وبینار" icon={<Download className="h-4 w-4" />} color="rose">
-        <Field label="لینک فایل ضبط‌شده (بعد از اتمام)">
-          <Input dir="ltr" value={live.recordingUrl ?? ""}
-            placeholder="https://… یا /videos/academy/…"
-            onChange={(e) => set("recordingUrl", e.target.value || undefined)} />
-        </Field>
-        <div className="flex flex-wrap gap-4 text-sm">
-          <label className="flex cursor-pointer items-center gap-2">
-            <input type="checkbox" className="h-4 w-4 accent-accent"
-              checked={!!live.recordingDownloadable}
-              onChange={(e) => set("recordingDownloadable", e.target.checked)} />
-            <Download className="h-3.5 w-3.5 text-blue-500" />
-            قابل دانلود توسط ثبت‌نام‌کنندگان
-          </label>
-          <label className="flex cursor-pointer items-center gap-2">
-            <input type="checkbox" className="h-4 w-4 accent-accent"
-              checked={!!live.recordingPublic}
-              onChange={(e) => set("recordingPublic", e.target.checked)} />
-            <Globe className="h-3.5 w-3.5 text-emerald-500" />
-            نمایش و دانلود عمومی
-          </label>
+      {/* Recording is intentionally not advertised until a protected upload/delivery path exists. */}
+      <SectionBox title="ضبط و بازپخش" icon={<Download className="h-4 w-4" />} color="rose">
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-6 text-amber-900">
+          این سامانه پخش زنده را ضبط یا ذخیره نمی‌کند و برای وبینار فایل ضبط‌شده‌ای ساخته نمی‌شود. انتشار ضبط فقط پس از راه‌اندازی مسیر آپلود خصوصی و کنترل دسترسی ممکن خواهد بود.
         </div>
-        {live.recordingUrl && live.recordingDownloadable && (
-          <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
-            <Download className="h-4 w-4 shrink-0" />
-            <div>
-              <p className="font-semibold">لینک دانلود فعال است</p>
-              <a href={live.recordingUrl} target="_blank" rel="noopener noreferrer"
-                className="underline underline-offset-2 break-all">{live.recordingUrl}</a>
-            </div>
-          </div>
-        )}
       </SectionBox>
     </div>
   );
@@ -1060,7 +1113,7 @@ const DEFAULT_COURSE_LIVE: Omit<LiveEventConfig, "isOnline"> = {
   registeredCount: 0,
   platform: "Zoom",
   status: "scheduled",
-  certificateEnabled: true,
+  certificateEnabled: false,
 };
 
 const DEFAULT_WORKSHOP_LIVE: LiveEventConfig = {
@@ -1113,6 +1166,7 @@ function ItemDrawer({
   categories,
   onSave,
   onClose,
+  registeredCount,
   defaultType = "course",
 }: {
   item: EducationItem | null;
@@ -1120,6 +1174,7 @@ function ItemDrawer({
   categories: Category[];
   onSave: (item: EducationItem) => void;
   onClose: () => void;
+  registeredCount: number;
   defaultType?: EducationType;
 }) {
   const isNew = item === null;
@@ -1160,7 +1215,11 @@ function ItemDrawer({
 
   const handleSave = () => {
     const slug = form.slug.trim() || makeSlug(form.title.fa || form.title.en);
-    onSave({ ...form, slug });
+    onSave({
+      ...form,
+      slug,
+      ...(form.liveEvent ? { liveEvent: { ...form.liveEvent, registeredCount } } : {}),
+    });
   };
 
   const tc = TYPE_COLORS[form.type];
@@ -1391,12 +1450,22 @@ function ItemDrawer({
             </Field>
           </div>
 
-          {/* ── دوره آموزشی: آپلود ویدیوها ── */}
+          {/* ── دوره آموزشی: ساختار درس‌ها و فایل‌های خصوصی ── */}
           {form.type === "course" && (
-            <VideoUploadPanel
-              videos={form.videoFiles ?? []}
-              onChange={(v) => set("videoFiles", v)}
-            />
+            <>
+              <LessonListEditor
+                lessons={form.lessonList ?? []}
+                onChange={(lessons) => {
+                  set("lessonList", lessons);
+                  set("lessons", lessons.length);
+                }}
+              />
+              <VideoUploadPanel
+                videos={form.videoFiles ?? []}
+                lessons={form.lessonList ?? []}
+                onChange={(v) => set("videoFiles", v)}
+              />
+            </>
           )}
 
           {/* ── ورکشاپ: تنظیمات رویداد ── */}
@@ -1405,6 +1474,8 @@ function ItemDrawer({
               live={form.liveEvent ?? { ...DEFAULT_WORKSHOP_LIVE }}
               onChange={(v) => set("liveEvent", v)}
               slug={form.slug}
+              registeredCount={registeredCount}
+              saved={!isNew}
             />
           )}
 
@@ -1414,6 +1485,8 @@ function ItemDrawer({
               live={form.liveEvent ?? { ...DEFAULT_WEBINAR_LIVE }}
               onChange={(v) => set("liveEvent", v)}
               slug={form.slug}
+              registeredCount={registeredCount}
+              saved={!isNew}
             />
           )}
         </div>
@@ -1435,17 +1508,19 @@ function ItemDrawer({
    ═══════════════════════════════════════════════════════════════ */
 
 function ItemCard({
-  item, locale, onEdit, onDelete, onToggleFlag,
+  item, locale, registeredCount, onEdit, onDelete, onToggleFlag,
 }: {
-  item: EducationItem; locale: Locale;
+  item: EducationItem; locale: Locale; registeredCount: number;
   onEdit: () => void; onDelete: () => void;
   onToggleFlag: (flag: "featured" | "popular") => void;
 }) {
   const tc = TYPE_COLORS[item.type];
   const statusMeta = item.draftStatus ? DRAFT_STATUS_META[item.draftStatus] : DRAFT_STATUS_META.published;
-  const liveStatusMeta = item.liveEvent ? LIVE_STATUS_META[item.liveEvent.status] : null;
+  const itemLiveStatus = item.liveEvent ? eventStatusOf(item.liveEvent) : null;
+  const liveStatusMeta = itemLiveStatus ? LIVE_STATUS_META[itemLiveStatus] : null;
+  const meetingUrl = item.liveEvent?.isOnline ? safeExternalHttpsUrl(item.liveEvent.meetLink)?.href : null;
   const isFree = !item.price || (item.price.fa === 0 && item.price.en === 0);
-  const isLive = item.liveEvent?.status === "live";
+  const isLive = itemLiveStatus === "live";
 
   return (
     <div className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-white transition-shadow hover:shadow-medium">
@@ -1532,7 +1607,7 @@ function ItemCard({
               </span>
               <span className="flex items-center gap-1">
                 <Users className="h-3 w-3" />
-                {item.liveEvent.registeredCount}
+                {registeredCount}
                 {item.liveEvent.capacity > 0 && `/${item.liveEvent.capacity}`}
               </span>
             </>
@@ -1553,11 +1628,6 @@ function ItemCard({
           <span className={isFree ? "text-emerald-600 font-medium" : ""}>
             {isFree ? "رایگان" : `${(item.price!.fa).toLocaleString("fa-IR")} ت`}
           </span>
-          {item.liveEvent?.recordingDownloadable && item.liveEvent.recordingUrl && (
-            <span className="flex items-center gap-1 text-blue-600">
-              <Download className="h-3 w-3" /> دانلود
-            </span>
-          )}
         </div>
 
         <div className="flex items-center gap-2 pt-1 border-t border-border">
@@ -1571,8 +1641,8 @@ function ItemCard({
               item.popular ? "bg-rose-50 text-rose-700 border border-rose-200" : "bg-zinc-100 text-zinc-500 hover:bg-rose-50 hover:text-rose-700")}>
             <TrendingUp className="h-2.5 w-2.5" /> محبوب
           </button>
-          {item.liveEvent?.isOnline && item.liveEvent.meetLink && (
-            <a href={item.liveEvent.meetLink} target="_blank" rel="noopener noreferrer"
+          {meetingUrl && (
+            <a href={meetingUrl} target="_blank" rel="noopener noreferrer"
               className="mr-auto flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100">
               <LinkIcon className="h-2.5 w-2.5" /> لینک جلسه
             </a>
@@ -1587,13 +1657,15 @@ function ItemCard({
    STATS BAR
    ═══════════════════════════════════════════════════════════════ */
 
-function StatsBar({ items }: { items: EducationItem[] }) {
+function StatsBar({ items, registrationsBySlug, now }: { items: EducationItem[]; registrationsBySlug: Record<string, number> | null; now: number }) {
   const courses = items.filter((i) => i.type === "course").length;
   const workshops = items.filter((i) => i.type === "workshop").length;
   const webinars = items.filter((i) => i.type === "webinar").length;
-  const liveNow = items.filter((i) => i.liveEvent?.status === "live").length;
+  const liveNow = items.filter((i) => Boolean(i.liveEvent && eventStatusOf(i.liveEvent, now) === "live")).length;
   const totalVideos = items.reduce((s, i) => s + (i.videoFiles?.length ?? 0), 0);
-  const totalRegistered = items.reduce((s, i) => s + (i.liveEvent?.registeredCount ?? 0), 0);
+  const totalRegistered = items.reduce((sum, item) => sum + (registrationsBySlug
+    ? registrationsBySlug[item.slug] ?? 0
+    : item.liveEvent?.registeredCount ?? 0), 0);
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -1641,13 +1713,40 @@ export function AcademyManager({
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [search, setSearch] = useState("");
   const [editItem, setEditItem] = useState<EducationItem | null | "new">(null);
+  const [registrationCounts, setRegistrationCounts] = useState<Record<string, number> | null>(null);
+  const [statusNow, setStatusNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    let active = true;
+    const refreshCounts = async () => {
+      try {
+        const response = await fetch("/api/admin/reservations", { credentials: "include", cache: "no-store" });
+        if (!response.ok) throw new Error("reservations_unavailable");
+        const payload = await response.json() as { reservations?: AcademyReservation[] };
+        const counts: Record<string, number> = {};
+        for (const reservation of payload.reservations ?? []) {
+          if (reservation.status === "cancelled") continue;
+          counts[reservation.eventSlug] = (counts[reservation.eventSlug] ?? 0) + 1;
+        }
+        if (active) setRegistrationCounts(counts);
+      } catch {
+        if (active) setRegistrationCounts(null);
+      }
+    };
+    void refreshCounts();
+    const interval = setInterval(() => {
+      setStatusNow(Date.now());
+      void refreshCounts();
+    }, 30_000);
+    return () => { active = false; clearInterval(interval); };
+  }, []);
 
   const { education, artists, categories } = data;
 
   const filtered = useMemo(() => {
     let list = education.filter((i) => i.type === panel);
-    if (filterStatus === "live") list = list.filter((i) => i.liveEvent?.status === "live");
-    else if (filterStatus === "free") list = list.filter((i) => !i.price || i.price.fa === 0);
+    if (filterStatus === "live") list = list.filter((i) => Boolean(i.liveEvent && eventStatusOf(i.liveEvent, statusNow) === "live"));
+    else if (filterStatus === "free") list = list.filter((i) => isFreePrice(i.price));
     else if (filterStatus === "pending") list = list.filter((i) => i.draftStatus === "pending_review");
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -1657,7 +1756,7 @@ export function AcademyManager({
       );
     }
     return list;
-  }, [education, panel, filterStatus, search]);
+  }, [education, panel, filterStatus, search, statusNow]);
 
   const handleSave = useCallback((saved: EducationItem) => {
     const exists = education.find((e) => e.id === saved.id);
@@ -1673,7 +1772,7 @@ export function AcademyManager({
     update({ education: education.map((e) => e.id === id ? { ...e, [flag]: !e[flag] } : e) });
   }, [education, update]);
 
-  const liveCount = education.filter((e) => e.liveEvent?.status === "live").length;
+  const liveCount = education.filter((e) => Boolean(e.liveEvent && eventStatusOf(e.liveEvent, statusNow) === "live")).length;
   const pendingCount = education.filter((e) => e.draftStatus === "pending_review").length;
 
   const panelDef = PANEL_TABS.find((p) => p.id === panel)!;
@@ -1721,8 +1820,14 @@ export function AcademyManager({
         </div>
       )}
 
+      {registrationCounts === null && (
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          شمار رزروهای واقعی دریافت نشد؛ اعداد فعلی از فیلدهای ذخیره‌شدهٔ محتوا خوانده شده‌اند و ممکن است به‌روز نباشند.
+        </div>
+      )}
+
       {/* Stats */}
-      <StatsBar items={education} />
+      <StatsBar items={education} registrationsBySlug={registrationCounts} now={statusNow} />
 
       {/* Panel tabs */}
       <div className="flex gap-1 rounded-xl border border-border bg-background-secondary p-1">
@@ -1754,7 +1859,7 @@ export function AcademyManager({
 
       {/* ── Analytics tab ── */}
       {isAnalytics ? (
-        <AcademyAnalytics items={education} locale={locale} />
+        <AcademyAnalytics items={education} locale={locale} registrationsBySlug={registrationCounts} />
       ) : (
         <>
           {/* Filter + Search bar */}
@@ -1807,6 +1912,7 @@ export function AcademyManager({
                   key={item.id}
                   item={item}
                   locale={locale}
+                  registeredCount={registrationCounts ? registrationCounts[item.slug] ?? 0 : item.liveEvent?.registeredCount ?? 0}
                   onEdit={() => setEditItem(item)}
                   onDelete={() => handleDelete(item.id)}
                   onToggleFlag={(flag) => handleToggleFlag(item.id, flag)}
@@ -1823,6 +1929,7 @@ export function AcademyManager({
           item={editItem === "new" ? null : editItem}
           artists={artists}
           categories={categories}
+          registeredCount={editItem === "new" ? 0 : registrationCounts ? registrationCounts[editItem.slug] ?? 0 : editItem.liveEvent?.registeredCount ?? 0}
           onSave={handleSave}
           onClose={() => setEditItem(null)}
           defaultType={panel === "analytics" ? "course" : panel}

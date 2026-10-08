@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getAdminSession, getSession } from "@/lib/auth";
 import { withNoStore } from "@/lib/http";
 import { clientIp, tooManyAttempts, recordAttempt, retryAfterSeconds } from "@/lib/rate-limit";
 import { storePublicMedia } from "@/lib/media-storage";
@@ -16,7 +16,7 @@ function unauthorized() {
 /** Artist/admin image uploads are stored in the configured first-party object store. */
 export async function POST(req: Request) {
   const session = await getSession();
-  if (!session || (session.role !== "artist" && session.role !== "admin")) return unauthorized();
+  if (session?.role !== "artist" && !(await getAdminSession())) return unauthorized();
 
   const rateKey = `upload:${clientIp(req)}`;
   if (tooManyAttempts(rateKey)) {

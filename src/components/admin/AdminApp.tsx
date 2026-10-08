@@ -58,6 +58,7 @@ import { Field, Input, Select, Textarea } from "@/components/ui/Input";
 import { ErrorState, Skeleton } from "@/components/ui/States";
 import { Badge } from "@/components/ui/Badge";
 import { SESSION_FETCH } from "@/lib/http";
+import { ADMIN_LOGIN_DISABLED } from "@/lib/admin-access";
 import { cn, href, slugify, t } from "@/lib/utils";
 import type { AnnouncementBarConfig, AnnouncementBarDirection, AnnouncementBarKind, AnnouncementBarMotion, AnnouncementBarTransition, Banner, Category, EducationItem, HeroContent, HomeSectionKey, PortfolioHeroSettings, SeoMeta, SiteContent } from "@/lib/types";
 import { PortfolioHeroManager } from "@/components/admin/PortfolioHeroManager";
@@ -410,13 +411,15 @@ export function AdminApp() {
               <p className="truncate text-sm font-medium text-white">{user?.name ?? "ادمین"}</p>
               <p className="truncate text-[11px] text-white/40">{user?.email ?? ""}</p>
             </div>
-            <button
-              onClick={() => router.push(`/admin/${locale}/login`)}
-              className="text-white/40 hover:text-white"
-              title="خروج از حساب"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+            {!ADMIN_LOGIN_DISABLED && (
+              <button
+                onClick={() => router.push(`/admin/${locale}/login`)}
+                className="text-white/40 hover:text-white"
+                title="خروج از حساب"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
       </aside>

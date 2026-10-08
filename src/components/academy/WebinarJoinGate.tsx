@@ -15,6 +15,8 @@ export interface JoinIdentity {
   name: string;
   email: string;
   viewerId: string;
+  /** Returned only for an authorized external workshop attendee. */
+  joinUrl?: string;
 }
 
 interface Props {
@@ -26,6 +28,8 @@ interface Props {
   durationMin?: number;
   capacity?: number;
   registeredCount?: number;
+  chatEnabled?: boolean;
+  requiresAccount?: boolean;
   status: "scheduled" | "live" | "ended" | "cancelled";
   /** If user is already logged in, prefill name/email */
   prefillName?: string;
@@ -37,7 +41,7 @@ interface Props {
 const STORAGE_KEY = "webinar-guest-identity";
 
 function genViewerId() {
-  return `v-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  return `v-${crypto.randomUUID()}`;
 }
 
 export function WebinarJoinGate({
@@ -49,6 +53,8 @@ export function WebinarJoinGate({
   durationMin,
   capacity,
   registeredCount = 0,
+  chatEnabled = true,
+  requiresAccount = false,
   status,
   prefillName = "",
   prefillEmail = "",
@@ -93,26 +99,38 @@ export function WebinarJoinGate({
     }
 
     setLoading(true);
-
-    // Build a stable viewerId tied to email (so same person gets same ID on reload)
-    const viewerId = `v-${btoa(trimEmail).replace(/[^a-z0-9]/gi, "").slice(0, 12)}-${slug.slice(0, 6)}`;
-
-    // Persist for convenience
+    const viewerId = genViewerId();
     try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ name: trimName, email: trimEmail }));
-    } catch { /* ignore */ }
-
-    // Register attendee in the signal server
-    try {
-      await fetch(`/api/webinar/${slug}/signal`, {
+      const response = await fetch(`/api/webinar/${encodeURIComponent(slug)}/signal`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "register", viewerId, name: trimName, email: trimEmail }),
       });
-    } catch { /* best-effort */ }
+      const data = await response.json() as { ok?: boolean; error?: string; joinUrl?: string };
+      if (!response.ok || !data.ok) {
+        const messages: Record<string, string> = {
+          event_full: isFA ? "ظرفیت این رویداد تکمیل شده است." : "This event is full.",
+          too_many_attempts: isFA ? "تعداد تلاش‌ها زیاد است؛ چند دقیقه دیگر دوباره امتحان کنید." : "Too many attempts. Please try again in a few minutes.",
+          event_closed: isFA ? "این رویداد به پایان رسیده یا لغو شده است." : "This event has ended or was cancelled.",
+          payment_pending: isFA ? "پرداخت هنوز تأیید نشده است؛ پس از تأیید مدیر، دوباره وارد شوید." : "Payment is not approved yet. Please return after the academy confirms it.",
+          sign_in_required: isFA ? "برای ورود به رویداد پولی باید با حساب ثبت‌نام‌شده وارد شوید." : "Sign in with the account used to register for this paid event.",
+          viewer_limit: isFA ? "ظرفیت پخش هم‌زمان تکمیل است." : "The live stream has reached its concurrent viewer limit.",
+          meeting_unavailable: isFA ? "لینک جلسه هنوز در دسترس نیست. با مدیر آکادمی تماس بگیرید." : "The meeting link is unavailable. Please contact the academy admin.",
+        };
+        setError(messages[data.error ?? ""] ?? (isFA ? "ورود انجام نشد؛ اتصال یا اطلاعات را بررسی کنید." : "Could not join. Check the connection and try again."));
+        return;
+      }
 
-    setLoading(false);
-    onJoin({ name: trimName, email: trimEmail, viewerId });
+      try {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ name: trimName, email: trimEmail }));
+      } catch { /* ignore */ }
+      onJoin({ name: trimName, email: trimEmail, viewerId, ...(data.joinUrl ? { joinUrl: data.joinUrl } : {}) });
+    } catch {
+      setError(isFA ? "خطای شبکه. دوباره تلاش کنید." : "Network error. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const formattedDate = startsAt
@@ -209,8 +227,8 @@ export function WebinarJoinGate({
               <div className="flex flex-wrap gap-2">
                 {[
                   { icon: Wifi, text: isFA ? "بدون نیاز به دانلود" : "No download needed" },
-                  { icon: ShieldCheck, text: isFA ? "ورود رایگان" : "Free to join" },
-                  { icon: Users, text: isFA ? "چت زنده با شرکت‌کنندگان" : "Live chat" },
+                  { icon: ShieldCheck, text: isFA ? "ورود ایمن پس از ثبت‌نام" : "Registered attendee access" },
+                  ...(chatEnabled ? [{ icon: Users, text: isFA ? "چت زنده با شرکت‌کنندگان" : "Live chat" }] : []),
                 ].map(({ icon: Icon, text }) => (
                   <span key={text} className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/60">
                     <Icon className="h-3 w-3 text-accent" />
@@ -233,18 +251,20 @@ export function WebinarJoinGate({
                   : "Enter your details to join the webinar room."}
               </p>
 
-              {isFull ? (
-                <div className="rounded-xl bg-red-900/30 border border-red-500/30 p-5 text-center">
-                  <Users className="h-8 w-8 mx-auto mb-2 text-red-400" />
-                  <p className="font-semibold text-white">{isFA ? "ظرفیت تکمیل است" : "Fully Booked"}</p>
-                  <p className="mt-1 text-sm text-white/50">{isFA ? "متأسفانه جایگاهی باقی نمانده." : "No spots remaining."}</p>
-                </div>
-              ) : status === "ended" || status === "cancelled" ? (
+              {status === "ended" || status === "cancelled" ? (
                 <div className="rounded-xl bg-zinc-800/60 border border-white/10 p-5 text-center">
                   <p className="font-semibold text-white/60">{isFA ? "این رویداد پایان یافته است." : "This event has ended."}</p>
                 </div>
               ) : (
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <>
+                  {isFull && (
+                    <div className="mb-4 rounded-xl bg-amber-900/20 border border-amber-500/30 p-4 text-sm text-amber-100/80">
+                      {isFA
+                        ? "ظرفیت تکمیل شده است. اگر قبلاً ثبت‌نام کرده‌اید، با همان ایمیل وارد شوید؛ ثبت‌نام تازه پذیرفته نمی‌شود."
+                        : "Capacity is full. If you already registered, use the same email to join; new registrations will be rejected."}
+                    </div>
+                  )}
+                  <form onSubmit={handleSubmit} className="space-y-4">
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-white/60">
                       {isFA ? "نام و نام خانوادگی" : "Full Name"} *
@@ -310,11 +330,16 @@ export function WebinarJoinGate({
                   </button>
 
                   <p className="text-center text-[11px] text-white/30">
-                    {isFA
-                      ? "ورود به وبینار مستقل از حساب کاربری سایت است."
-                      : "Joining is independent from your site account."}
+                    {requiresAccount
+                      ? isFA
+                        ? "این رویداد پولی است؛ ورود با حسابی که پرداخت آن تأیید شده لازم است."
+                        : "This paid event requires the approved account used for registration."
+                      : isFA
+                        ? "برای رویداد رایگان، ورود با حساب سایت الزامی نیست."
+                        : "A site account is not required for this free event."}
                   </p>
-                </form>
+                  </form>
+                </>
               )}
             </div>
           </div>

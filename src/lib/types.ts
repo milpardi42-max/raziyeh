@@ -281,6 +281,10 @@ export interface AcademyReservation {
   email: string;
   createdAt: string;
   status: ReservationStatus;
+  /** Whether payment confirmation is required before access may be granted. */
+  paymentRequired?: boolean;
+  /** Whether an administrator or a free enrolment has granted protected course/live access. */
+  accessGranted?: boolean;
   reminderSentAt?: string;
 }
 
@@ -290,16 +294,20 @@ export type LiveEventStatus = "scheduled" | "live" | "ended" | "cancelled";
 export interface CourseVideoFile {
   id: string;
   title: Localized;
-  /** Public URL of the uploaded video */
+  /** Same-origin access-controlled stream endpoint. */
   url: string;
   /** File size in bytes */
   sizeBytes?: number;
   /** Duration in seconds */
   durationSec?: number;
-  /** Whether this video is free to preview */
+  /** Stable association with an item in the course curriculum. */
+  lessonId?: string;
+  /** Public preview flag. Videos are private by default when this is absent. */
   free?: boolean;
   /** Upload timestamp ISO string */
   uploadedAt: string;
+  /** Private object-store key; server-only and stripped before public serialization. */
+  storageKey?: string;
 }
 
 export interface LessonItem {
@@ -309,17 +317,13 @@ export interface LessonItem {
   free?: boolean;
 }
 
-/** Webinar live-stream configuration (camera/mic based broadcast) */
+/** Webinar live-stream configuration. External services must provide the HLS output; this app does not ingest RTMP. */
 export interface WebinarStreamConfig {
-  /**
-   * Stream source:
-   *   "camera"   — admin streams directly from browser camera (WebRTC)
-   *   "external" — admin provides an external RTMP/HLS stream URL
-   */
+  /** "camera" uses browser WebRTC P2P; "external" proxies HLS from a separately configured service. */
   source: "camera" | "external";
-  /** External RTMP ingest URL (when source = "external") */
+  /** Legacy metadata only. RTMP ingest/conversion is not implemented by this application. */
   rtmpUrl?: string;
-  /** External HLS playback URL for viewers (when source = "external") */
+  /** Public HTTPS HLS playback URL provided by the external service (when source = "external"). */
   hlsUrl?: string;
   /** Whether chat is enabled during the webinar */
   chatEnabled?: boolean;

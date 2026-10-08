@@ -3,6 +3,7 @@ import "./globals.css";
 import { dirOf, type Locale } from "@/lib/i18n/types";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://rosieatelier.com"),
   title: "Rosie Atelier",
   description: "Pattern, design, creativity and lifestyle.",
 };

@@ -14,14 +14,15 @@ import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Reveal } from "@/components/ui/Reveal";
 import { enrichEducation, getSite } from "@/lib/data/queries";
 import { getAllReservations } from "@/lib/data/reservations";
+import { getSession } from "@/lib/auth";
+import { hasGrantedReservation, isFreePrice } from "@/lib/academy-live";
 import { academyOverview, lessonMinutes, previewVideoOf } from "@/lib/data/academy";
 import { dictionaries } from "@/lib/i18n/dictionary";
 import type { Locale } from "@/lib/i18n/types";
 import { faNum, formatDuration, href, t } from "@/lib/utils";
-import { AcademyClient } from "./AcademyClient";
+import { AcademyClient, type AcademyClientItem } from "./AcademyClient";
 import { AcademyHeroPreview } from "@/components/academy/AcademyHeroPreview";
 import { VideoGrid, type AcademyVideoEntry } from "@/components/academy/VideoGrid";
-import { LiveEventBanner } from "@/components/academy/LiveEventBanner";
 import { SiteContentBanner } from "@/components/layout/SiteContentBanner";
 
 export const dynamic = "force-dynamic";
@@ -56,11 +57,17 @@ export default async function AcademyPage({
   const isFA = locale === "fa";
   const academyBanners = site.banners.filter((banner) => banner.enabled && banner.placement === "academy");
 
-  const [all, reservations] = await Promise.all([
+  const [all, reservations, session] = await Promise.all([
     Promise.resolve(site.education.map((e) => enrichEducation(site, e))),
     getAllReservations(),
+    getSession(),
   ]);
   const stats = academyOverview(site, reservations);
+  const clientItems: AcademyClientItem[] = all.map((item) => {
+    const safeItem = { ...item };
+    delete safeItem.videoFiles;
+    return { ...safeItem, previewVideoUrl: previewVideoOf(item)?.url };
+  });
 
   const featured = all.find((e) => e.featured && e.type === "course") ?? all[0];
 
@@ -68,16 +75,23 @@ export default async function AcademyPage({
   const featuredVideo = previewVideoOf(featured);
   const heroVideo = featuredVideo?.url ?? BUILT_IN_PREVIEW;
 
-  /* Every lesson video in the panel — the featured one is already playing in the hero. */
-  const videoEntries: AcademyVideoEntry[] = all.flatMap((item) =>
-    (item.videoFiles ?? []).map((video) => ({
-      video,
-      courseSlug: item.slug,
-      courseTitle: item.title,
-      skip: item.id === featured?.id,
-    })),
-  );
-  const galleryEntries = videoEntries.filter((entry) => entry.video.url !== heroVideo);
+  /* Only genuinely public lessons and videos owned by the current viewer appear in the public gallery. */
+  const videoEntries: AcademyVideoEntry[] = all.flatMap((item) => {
+    const hasCourseAccess = isFreePrice(item.price) || hasGrantedReservation(reservations, item.slug, session);
+    return (item.videoFiles ?? []).map((video) => {
+      const linkedLesson = item.lessonList?.find((lesson) => lesson.id === video.lessonId);
+      const canPlay = video.free === true || linkedLesson?.free === true || hasCourseAccess;
+      return {
+        video,
+        courseSlug: item.slug,
+        courseTitle: item.title,
+        lessonTitle: linkedLesson?.title,
+        canPlay,
+        skip: item.id === featured?.id && video.id === featuredVideo?.id,
+      };
+    });
+  });
+  const galleryEntries = videoEntries.filter((entry) => entry.canPlay && !entry.skip && entry.video.url !== heroVideo);
 
   const liveEvent =
     all.find((e) => (e.type === "webinar" || e.type === "workshop") && e.liveEvent?.status === "live") ??
@@ -113,7 +127,7 @@ export default async function AcademyPage({
     {
       icon: Clock,
       label: isFA ? `${n(Math.round(stats.minutes / 60))} ساعت آموزش` : `${n(Math.round(stats.minutes / 60))} hours`,
-      desc: isFA ? "مجموع زمان ویدیوهای دوره‌ها" : "Total course video time",
+      desc: isFA ? "مدت اعلام‌شده درس‌های دوره‌های منتشرشده" : "Published course lesson duration",
     },
     {
       icon: Radio,
@@ -184,8 +198,8 @@ export default async function AcademyPage({
     name: d.brand,
     url: `https://rosieatelier.com/${locale}/academy`,
     description: isFA
-      ? "دوره‌ها، ورکشاپ‌ها و وبینارهای آکادمی رزی برای طراحی پترن و سطح."
-      : "Rosie Academy courses, workshops and webinars for pattern and surface design.",
+      ? "دوره‌ها، ورکشاپ‌ها و وبینارهای آکادمی آتلیه رزی برای طراحی پترن و سطح."
+      : "Rosie Atelier Academy courses, workshops and webinars for pattern and surface design.",
     hasOfferCatalog: {
       "@type": "OfferCatalog",
       name: isFA ? "دوره‌های آکادمی" : "Academy courses",
@@ -244,12 +258,12 @@ export default async function AcademyPage({
               <h1 className="anim-blur-in font-display text-h1 text-white text-balance leading-tight">
                 {isFA ? (
                   <>
-                    آکادمی رزی<br />
+                    آکادمی آتلیه رزی<br />
                     <span className="text-accent">یاد بگیر، بساز، بفروش.</span>
                   </>
                 ) : (
                   <>
-                    Rosie Academy<br />
+                    Rosie Atelier Academy<br />
                     <span className="text-accent">Learn, Build, Publish.</span>
                   </>
                 )}
@@ -299,7 +313,9 @@ export default async function AcademyPage({
                   <AcademyHeroPreview src={heroVideo} poster={featured.image}>
                     <div className="flex flex-wrap items-center gap-2 mb-3">
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/90 px-3 py-1 text-caption font-medium text-white backdrop-blur-sm">
-                        {isFA ? "منتخب" : "Featured"} · {d.common[featured.type]}
+                        {featuredVideo
+                          ? `${isFA ? "پیش‌نمایش درس رایگان" : "Free lesson preview"} · ${d.common[featured.type]}`
+                          : isFA ? "فیلم معرفی آکادمی آتلیه رزی" : "Rosie Atelier Academy preview film"}
                       </span>
                       {featured.category && (
                         <span className="rounded-full border border-white/20 px-3 py-1 text-caption text-white/70 backdrop-blur-sm">
@@ -383,7 +399,9 @@ export default async function AcademyPage({
             {[
               isFA ? "✓ ثبت‌نام آنلاین با پیگیری در پنل" : "✓ Online enrollment tracked in the panel",
               isFA ? "✓ ظرفیت محدود رویدادهای زنده" : "✓ Limited seats on live events",
-              isFA ? "✓ پیش‌نمایش ویدیوهای درس‌ها" : "✓ Lesson video previews",
+              stats.freeVideos > 0
+                ? isFA ? `✓ ${n(stats.freeVideos)} پیش‌نمایش درس رایگان` : `✓ ${n(stats.freeVideos)} free lesson previews`
+                : isFA ? "✓ پخش امن ویدیو پس از بارگذاری در پنل" : "✓ Secure video playback after upload",
               isFA ? "✓ پشتیبانی از طریق صفحه تماس" : "✓ Support through the contact page",
             ].map((item) => (
               <span key={item} className="font-medium">{item}</span>
@@ -392,10 +410,21 @@ export default async function AcademyPage({
         </div>
       </div>
 
+      {/* The main catalogue is the first substantive section after the hero: webinars, then workshops, then recorded courses. */}
+      <AcademyClient
+        items={clientItems}
+        liveEvent={liveEvent}
+        categories={cats}
+        initialCategory={initialCategory}
+        stats={{ courses: stats.courses, lessons: stats.lessons, minutes: stats.minutes, instructors: stats.instructors, enrollments: stats.enrollments, students: stats.students }}
+        itemStats={stats.bySlug}
+        instructorStats={stats.instructorStats}
+      />
+
       {/* ── What you'll learn (3-col feature cards) ───────────── */}
       <section className="container-x py-16">
         <SectionHeader
-          eyebrow={isFA ? "چرا آکادمی رزی" : "Why Rosie Academy"}
+          eyebrow={isFA ? "چرا آکادمی آتلیه رزی" : "Why Rosie Atelier Academy"}
           title={isFA ? "هر آنچه نیاز داری در یک جا" : "Everything you need in one place"}
           description={
             isFA
@@ -531,22 +560,6 @@ export default async function AcademyPage({
         </div>
       </section>
 
-      {/* ── Live event banner ─────────────────────────────────── */}
-      {liveEvent && (
-        <section className="container-x pb-0 pt-10">
-          <LiveEventBanner event={liveEvent} />
-        </section>
-      )}
-
-      {/* ── Interactive catalog (client component) ────────────── */}
-      <AcademyClient
-        items={all}
-        categories={cats}
-        initialCategory={initialCategory}
-        stats={{ courses: stats.courses, lessons: stats.lessons, minutes: stats.minutes, instructors: stats.instructors, enrollments: stats.enrollments, students: stats.students }}
-        itemStats={stats.bySlug}
-        instructorStats={stats.instructorStats}
-      />
     </>
   );
 }
